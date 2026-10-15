@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "资产账本",
+    "slug": "assetbook",
+    "version": "0.4.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#EDEAE2",
+    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "splash": {
+      "backgroundColor": "#EDEAE2",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "userInterfaceStyle": "light",
+      "bundleIdentifier": "com.assetbook.app"
+    },
+    "android": {
+      "userInterfaceStyle": "light",
+      "package": "com.assetbook.app",
+      "permissions": ["android.permission.INTERNET"],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#EDEAE2"
+      }
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许「资产账本」访问相册，用来给资产附上照片凭证。",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# native builds
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+ios/Pods/
+ios/build/
+*.apk
+*.aab
+*.ipa
+
+# logs / OS
+*.log
+.DS_Store
+*.orig
+
+# env / secrets
+.env
+.env.*

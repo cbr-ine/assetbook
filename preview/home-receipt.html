@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>凭条 · 票据质感</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --paper:#EDEAE2;   /* 热敏凭条纸（冷白，非米色） */
+    --ink:#1C2530;     /* 印字蓝黑 */
+    --dim:#6C7480;
+    --stamp:#B3241C;   /* 印章红：只用一次 */
+    --mono:"IBM Plex Mono","SFMono-Regular",Menlo,monospace;
+    --cjk:"Noto Sans SC",-apple-system,"PingFang SC",sans-serif;
+  }
+  *{box-sizing:border-box;-webkit-font-smoothing:antialiased}
+  html,body{margin:0;height:100%}
+  body{background:#2b2b28;display:flex;justify-content:center;align-items:stretch;min-height:100vh}
+  .screen{width:390px;height:844px;position:relative;overflow:hidden;background:var(--paper);color:var(--ink);
+          display:flex;flex-direction:column;font-family:var(--cjk)}
+  /* 撕口：上下缘打孔 */
+  .screen::before,.screen::after{content:"";position:absolute;left:0;right:0;height:9px;z-index:5;pointer-events:none;
+    background:radial-gradient(circle 5px at 6px 50%, #2b2b28 4.4px, transparent 4.6px) repeat-x;background-size:12px 9px}
+  .screen::before{top:0}.screen::after{bottom:0}
+
+  .statusbar{flex:0 0 auto;height:46px;padding:16px 26px 0;display:flex;align-items:center;justify-content:space-between;
+             font-family:var(--mono);font-size:11px;letter-spacing:1px;color:var(--dim)}
+  .scroll{flex:1 1 auto;overflow:hidden;padding:2px 26px 0}
+
+  .head{text-align:center;padding:10px 0 14px}
+  .head .t{font-size:17px;font-weight:700;letter-spacing:6px}
+  .head .s{font-family:var(--mono);font-size:10px;letter-spacing:2px;color:var(--dim);margin-top:6px}
+  .dash{border:0;border-top:1px dashed rgba(28,37,48,.4);margin:0}
+  .sec-label{font-family:var(--mono);font-size:10px;letter-spacing:3px;color:var(--dim);text-align:center;margin:12px 0}
+
+  .total{text-align:center;padding:6px 0 16px;position:relative}
+  .total .lab{font-family:var(--mono);font-size:11px;letter-spacing:3px;color:var(--dim)}
+  .total .num{font-family:var(--mono);font-size:40px;font-weight:600;letter-spacing:-.5px;margin-top:8px;font-variant-numeric:tabular-nums}
+  .stamp{position:absolute;right:8px;top:-6px;transform:rotate(-11deg);color:var(--stamp);border:2px solid var(--stamp);
+         border-radius:4px;padding:5px 8px;font-size:13px;font-weight:700;letter-spacing:3px;opacity:.82}
+  .stamp small{display:block;font-family:var(--mono);font-size:7px;letter-spacing:1px;margin-top:2px;font-weight:500}
+
+  .item{display:flex;align-items:baseline;font-family:var(--mono);font-size:14px;padding:7px 0}
+  .item .name{max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .item .lead{flex:1;border-bottom:1px dotted rgba(28,37,48,.45);margin:0 8px;transform:translateY(-4px)}
+  .item .amt{font-variant-numeric:tabular-nums;font-weight:500}
+  .item .cn{font-family:var(--cjk)}
+
+  .sum{margin-top:12px}
+  .sum .item{padding:6px 0}
+  .sum .item .name{color:var(--dim);font-size:13px}
+  .sum .big{font-size:17px;font-weight:600}
+
+  .chart-wrap{padding:6px 0 2px}
+  .chart-wrap svg{display:block;width:100%}
+
+  .foot{text-align:center;font-family:var(--mono);font-size:9.5px;letter-spacing:2px;color:var(--dim);line-height:1.9;padding:14px 0 8px}
+
+  .fade{position:absolute;left:0;right:0;bottom:70px;height:44px;z-index:3;background:linear-gradient(to bottom,rgba(237,234,226,0),var(--paper) 92%);pointer-events:none}
+  .tabbar{flex:0 0 auto;display:flex;align-items:flex-start;padding:12px 0 24px;border-top:1px dashed rgba(28,37,48,.4);z-index:4;background:var(--paper)}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;font-size:10px;letter-spacing:1px;color:var(--dim);font-family:var(--mono)}
+  .tab.active{color:var(--ink)}
+  .tab svg{width:19px;height:19px}
+  .mid{width:72px;display:flex;justify-content:center}
+  .mid .btn{width:52px;height:52px;border-radius:50%;background:var(--ink);color:var(--paper);display:flex;align-items:center;justify-content:center;margin-top:-30px;box-shadow:0 0 0 5px var(--paper)}
+  .mid svg{width:22px;height:22px}
+</style>
+</head>
+<body>
+  <div class="screen">
+    <div class="statusbar"><span>9:41</span><span>NO.0001</span></div>
+    <div class="scroll">
+      <div class="head">
+        <div class="t">资产账本</div>
+        <div class="s">ASSET  STATEMENT</div>
+      </div>
+      <hr class="dash" />
+
+      <div class="total">
+        <div class="lab">NET WORTH 净资产</div>
+        <div class="num">&#165;1,272,875</div>
+        <div class="stamp">对账无误<small>VERIFIED</small></div>
+      </div>
+      <hr class="dash" />
+
+      <div class="item"><span class="name cn">可流动现金等值物</span><span class="lead"></span><span class="amt">453,575</span></div>
+      <div class="item"><span class="name cn">固定资产与实物</span><span class="lead"></span><span class="amt">819,300</span></div>
+
+      <div class="sec-label">&#8212; EXPENSE 支出 / 近14天 &#8212;</div>
+      <div class="chart-wrap" id="chart"></div>
+      <div class="sum">
+        <hr class="dash" style="margin:10px 0 2px" />
+        <div class="item"><span class="name">合计 TOTAL</span><span class="lead"></span><span class="amt big">1,628.00</span></div>
+        <div class="item"><span class="name">日均 DAILY AVG</span><span class="lead"></span><span class="amt">116.29</span></div>
+      </div>
+
+      <div class="sec-label" style="margin-top:16px">&#8212; RECENT 最近记录 &#8212;</div>
+      <div id="rows"></div>
+
+      <div class="foot">2026-10-14 &nbsp;09:41:07<br/>THANK YOU &#183; 请核对后再行结算</div>
+    </div>
+    <div class="fade"></div>
+    <div class="tabbar">
+      <div class="tab active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg><span>总览</span></div>
+      <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3.5" y="7" width="17" height="12" rx="1.5"/><path d="M4 8.5A1.5 1.5 0 015.5 7H18"/></svg><span>资产</span></div>
+      <div class="mid"><div class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5.5v13M5.5 12h13"/></svg></div></div>
+      <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M5 20V11M12 20V4M19 20v-5"/></svg><span>统计</span></div>
+      <div class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8.6" r="3.4"/><path d="M5.2 20c0-3.4 3-5.8 6.8-5.8s6.8 2.4 6.8 5.8"/></svg><span>我的</span></div>
+    </div>
+  </div>
+<script>
+  const daily=[128,60,0,245,88,40,312,76,55,190,42,0,168,224];
+  const W=338,H=64,p=8,max=Math.max(...daily),min=Math.min(...daily),sp=(max-min)||1,st=W/(daily.length-1);
+  const pts=daily.map((v,i)=>[i*st,p+(1-(v-min)/sp)*(H-p*2)]);
+  const bars=daily.map((v,i)=>{const x=i*st, h=(v/max)*(H-p*2);return `<rect x="${(x-2.4).toFixed(1)}" y="${(H-p-h).toFixed(1)}" width="4.8" height="${Math.max(h,1).toFixed(1)}" fill="#1C2530" opacity=".82"/>`;}).join('');
+  document.getElementById('chart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" height="${H}">${bars}</svg>`;
+  const rows=[['午餐','支付宝　今天','38.00'],['打车','微信钱包　今天','26.50'],['咖啡','微信钱包　昨天','32.00'],['超市采购','招行储蓄卡　昨天','186.40']];
+  document.getElementById('rows').innerHTML=rows.map(([n,s,a])=>`<div class="item"><span class="name cn">${n}<br><span style="font-size:10px;color:var(--dim)">${s}</span></span><span class="lead"></span><span class="amt">-${a}</span></div>`).join('');
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+  <!-- 与 values/styles.xml 的 AppTheme 相同，额外声明浅色导航条图标（API 27+ 才支持 windowLightNavigationBar）。 -->
+  <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar">
+    <item name="android:textColor">@android:color/black</item>
+    <item name="android:editTextStyle">@style/ResetEditText</item>
+    <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+    <item name="colorPrimary">@color/colorPrimary</item>
+    <item name="android:statusBarColor">#EDEAE2</item>
+    <item name="android:navigationBarColor">#EDEAE2</item>
+    <item name="android:windowLightNavigationBar">true</item>
+    <item name="android:windowBackground">@color/activityBackground</item>
+  </style>
+</resources>
