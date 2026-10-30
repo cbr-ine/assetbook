@@ -21,7 +21,8 @@ import { AssetIcon } from '../components/AssetIcon';
 import { EnterView, motionOff, PressableScale } from '../components/Motion';
 import { RollingNumber } from '../components/RollingNumber';
 import { DashedRule, DotLeader, SectionLabel } from '../components/Rule';
-import { colors, fontFamily, motion, numerals, radius, spacing, type as t } from '../theme';
+import { fontFamily, motion, numerals, radius, spacing, type as t, type Palette } from '../theme';
+import { useTheme, useThemedStyles } from '../state/ThemeContext';
 import { currencySymbol, formatNumber } from '../utils/format';
 import { ASSET_GROUP_LABEL, ASSET_GROUP_LATIN, ASSET_TYPE_LATIN } from '../utils/labels';
 
@@ -72,6 +73,7 @@ interface DragState {
  * 组内长按可拖动调序：拿起后原位留一张虚线空单，浮层跟手，其余行滑动让位。
  */
 export function AssetsScreen() {
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
   const { assets, rates, baseCurrency, reorderAssets } = useApp();
   const [editor, setEditor] = useState<EditorState | null>(null);
@@ -205,10 +207,6 @@ export function AssetsScreen() {
 
         <DashedRule />
 
-        {assets.length > 0 ? (
-          <Text style={styles.pageHint}>点按条目可编辑　·　长按可拖动排序</Text>
-        ) : null}
-
         <GroupSection
           group="liquid"
           displayed={displayOf('liquid', liquid)}
@@ -302,6 +300,7 @@ const TotalLine = memo(function TotalLine({
   /** 金额逐位滚动（只给小计用；合计保持瞬时，避免同屏两处数字同时动） */
   roll?: boolean;
 }) {
+  const styles = useThemedStyles(createStyles);
   const text = `${currencySymbol(currency)}${formatNumber(Math.round(value * 100) / 100)}`;
 
   return (
@@ -354,6 +353,8 @@ function GroupSection({
   onArm: () => void;
   onDisarm: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const subtotalBase = cnyToBase(subtotalCny, baseCurrency, rates);
 
   return (
@@ -448,6 +449,7 @@ function SortableRow({
   onDisarm: () => void;
   children: React.ReactNode;
 }) {
+  const { colors } = useTheme();
   const touchStart = useRef(0);
   const dragging = useRef(false);
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -548,8 +550,14 @@ function AssetRowInner({
   rates: Rate[];
   onPress: () => void;
 }) {
+  const styles = useThemedStyles(createStyles);
   const isForeign = item.currency !== baseCurrency;
   const baseValue = baseValueOf(item.value, item.currency, baseCurrency, rates);
+  // 房产的面积 / 区域跟在类型标签后（一行收口，超宽截断）
+  const estate = [
+    item.areaM2 != null ? `${item.areaM2}㎡` : null,
+    item.region ?? null,
+  ].filter(Boolean).join(' · ');
 
   return (
     <PressableScale onPress={onPress} style={styles.row} pressTint accessibilityLabel={item.name}>
@@ -559,8 +567,9 @@ function AssetRowInner({
           <Text style={styles.name} numberOfLines={1}>
             {item.name}
           </Text>
-          <Text style={styles.tag}>
+          <Text style={styles.tag} numberOfLines={1}>
             {ASSET_TYPE_LATIN[item.type]} · {item.currency}
+            {estate ? ` · ${estate}` : ''}
           </Text>
         </View>
         <DotLeader />
@@ -589,7 +598,8 @@ const AssetRow = memo(
   (p, n) => p.item === n.item && p.baseCurrency === n.baseCurrency && p.rates === n.rates,
 );
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.paper,
@@ -641,7 +651,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.paperHi,
     borderRadius: 8,
     paddingHorizontal: spacing(2),
-    shadowColor: colors.ink,
+    shadowColor: colors.shadow,
     shadowOpacity: 0.25,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
@@ -655,15 +665,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing(2.5),
-  },
-  /** 顶注脚：把行的两种手势直接印在纸上（凭条小字惯例） */
-  pageHint: {
-    fontFamily: fontFamily.mono,
-    fontSize: t.tiny,
-    letterSpacing: 1,
-    color: colors.dimInk,
-    textAlign: 'center',
-    paddingVertical: spacing(2.5),
   },
   rowMain: {
     maxWidth: '50%',

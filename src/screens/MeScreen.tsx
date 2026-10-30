@@ -1,104 +1,48 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useState } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CloudDownload, Download, Plus, Trash2, Upload } from 'lucide-react-native';
+import { ChevronRight, Download, Moon, Sun, Trash2, Upload, type LucideIcon } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
-import type { Rate } from '../data/types';
-import { CURRENCIES, currencyName } from '../data/currencies';
 import { assertBackupPayload } from '../data/repo';
 import { useApp } from '../state/AppContext';
+import { useTheme, useThemedStyles, type ThemeMode } from '../state/ThemeContext';
 import { useConfirm } from '../components/Confirm';
 import { EnterView, PressableScale } from '../components/Motion';
 import { FoldPicker } from '../components/FoldPicker';
 import { DashedRule, DotLeader, SectionLabel } from '../components/Rule';
 import { useToast } from '../components/Toast';
-import { colors, fontFamily, numerals, radius, spacing, type as t } from '../theme';
+import { billingCycleEnd, billingCycleStart } from '../utils/format';
+import { fontFamily, numerals, radius, spacing, type as t, type Palette } from '../theme';
 
 const H_PADDING = spacing(6);
 
-/** 联网汇率来源：接口给「1 CNY = X 外币」，故 toCny = 1 / X。 */
-const FX_API = 'https://open.er-api.com/v6/latest/CNY';
-const FX_SOURCE = 'open.er-api.com';
-
-/** 本地时钟串（YYYY-MM-DD HH:mm），仅作展示。 */
-function nowStamp(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+/** 外观两档：浅色冷白凭条 / 深色夜纸白墨 */
+const APPEARANCES: { mode: ThemeMode; cn: string; latin: string; Icon: LucideIcon }[] = [
+  { mode: 'light', cn: '浅色', latin: 'LIGHT', Icon: Sun },
+  { mode: 'dark', cn: '深色', latin: 'DARK', Icon: Moon },
+];
 
 /**
- * 我的：汇率表（可联网更新）、基准币种、清空数据、关于。
- * 净值一律按人民币折算，基准币种只影响展示符号。
+ * 我的：外观（浅 / 深）、汇率与币种子页入口、数据导出导入、清空、关于。
+ * 汇率表、联网更新、添加币种与基准币种都收进「汇率与币种」子页，本页只留一行入口。
  */
-export function MeScreen() {
+export function MeScreen({ onOpenRates }: { onOpenRates: () => void }) {
+  const { colors, mode, setMode } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
-  const {
-    rates,
-    baseCurrency,
-    saveRate,
-    deleteRate,
-    setBaseCurrency,
-    clearAll,
-    exportBackup,
-    importBackup,
-  } = useApp();
+  const { rates, baseCurrency, exportBackup, importBackup, clearAll, billingDay, setBillingDay } = useApp();
   const toast = useToast();
   const { confirm } = useConfirm();
+  /** 账期起始日选择器展开态 */
+  const [cycleOpen, setCycleOpen] = useState(false);
 
-  const [fxBusy, setFxBusy] = useState(false);
-  const [fxUpdatedAt, setFxUpdatedAt] = useState<string | null>(null);
-  /** 添加币种选择器展开态 */
-  const [fxAdding, setFxAdding] = useState(false);
-
-  const baseCodes = useMemo(() => {
-    const set = new Set<string>(rates.map((r) => r.currency));
-    set.add(baseCurrency);
-    return Array.from(set).sort();
-  }, [rates, baseCurrency]);
-
-  /** 内置币种里还没加进汇率表的，供「添加币种」挑选。 */
-  const remaining = useMemo(
-    () => CURRENCIES.filter((c) => !rates.some((r) => r.currency === c.code)),
-    [rates],
-  );
-
-  const addCurrency = (code: string) => {
-    void saveRate(code, 1).then(() => {
-      toast.show(`已添加 ${code} ${currencyName(code)}，请把汇率改成实际值`);
-    });
-  };
-
-  /** 联网取实时汇率，逐个写回汇率表。 */
-  const fetchRates = async () => {
-    if (fxBusy) return;
-    setFxBusy(true);
-    try {
-      const res = await fetch(FX_API);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: { rates?: Record<string, number> } = await res.json();
-      const table = data.rates;
-      if (!table) throw new Error('unexpected payload');
-      let n = 0;
-      for (const r of rates) {
-        if (r.currency === 'CNY') continue;
-        const x = table[r.currency];
-        if (typeof x === 'number' && x > 0) {
-          await saveRate(r.currency, Number((1 / x).toPrecision(5)));
-          n += 1;
-        }
-      }
-      setFxUpdatedAt(nowStamp());
-      toast.show(`汇率已更新 · ${n} 种 · 来源 ${FX_SOURCE}`);
-    } catch {
-      toast.show('联网获取失败，请检查网络后重试，或继续用当前汇率');
-    } finally {
-      setFxBusy(false);
-    }
-  };
+  // 当前账期的两端（本地时区、含当天），随起始日选择即时重算
+  const cycleStart = billingCycleStart(new Date(), billingDay);
+  const cycleEnd = billingCycleEnd(cycleStart, billingDay);
+  const md = (d: Date) => `${d.getMonth() + 1}月${d.getDate()}日`;
 
   /** 导出：整本账写成 JSON，落缓存后交给系统分享（存文件 / 传到微信都行）。 */
   const exportLedger = async () => {
@@ -181,88 +125,65 @@ export function MeScreen() {
 
         <DashedRule />
 
-        <SectionLabel latin="RATES" cn="汇率（1 单位 = ? 人民币）" />
-        {rates.map((r) => (
-          <RateRow
-            key={r.currency}
-            rate={r}
-            onCommit={(value) => void saveRate(r.currency, value)}
-            onDelete={() => void deleteRate(r.currency)}
-          />
-        ))}
-
-        <View style={styles.rowActions}>
-          <PressableScale
-            onPress={() => void fetchRates()}
-            disabled={fxBusy}
-            style={[styles.btn, fxBusy && styles.btnBusy]}
-            pressTint
-            pressOpacity={0.55}
-            accessibilityLabel="联网更新汇率"
-          >
-            {fxBusy ? (
-              <ActivityIndicator size="small" color={colors.ink} />
-            ) : (
-              <CloudDownload size={16} color={colors.ink} strokeWidth={1.7} />
-            )}
-            <Text style={styles.btnText}>{fxBusy ? '获取中…' : '联网更新汇率'}</Text>
-          </PressableScale>
-        </View>
-        <Text style={styles.fxNote}>
-          {fxUpdatedAt
-            ? `已联网更新 · ${fxUpdatedAt} · 来源 ${FX_SOURCE}`
-            : '当前为内置汇率 · 点「联网更新汇率」取实时价'}
-        </Text>
-
-        <SectionLabel latin="CURRENCY" cn="添加币种" />
-        {remaining.length === 0 ? (
-          <Text style={styles.note}>所有内置币种都已添加。</Text>
-        ) : (
-          <FoldPicker
-            label="待选 CANDIDATES"
-            value={`${remaining.length} 种`}
-            expanded={fxAdding}
-            onToggle={() => setFxAdding((o) => !o)}
-          >
-            <View style={styles.chips}>
-              {remaining.map((c) => (
-                <PressableScale
-                  key={c.code}
-                  onPress={() => {
-                    addCurrency(c.code);
-                    setFxAdding(false);
-                  }}
-                  style={styles.chip}
-                  pressTint
-                  accessibilityLabel={`添加 ${c.code}`}
-                >
-                  <Text style={styles.chipCode}>{c.code}</Text>
-                  <Text style={styles.chipName}>{c.name}</Text>
-                  <Plus size={13} color={colors.dimInk} strokeWidth={1.8} />
-                </PressableScale>
-              ))}
-            </View>
-          </FoldPicker>
-        )}
-
-        <SectionLabel latin="BASE" cn="基准币种" />
+        <SectionLabel latin="APPEARANCE" cn="外观" />
         <View style={styles.chips}>
-          {baseCodes.map((c) => {
-            const on = c === baseCurrency;
+          {APPEARANCES.map(({ mode: m, cn, latin, Icon }) => {
+            const on = m === mode;
             return (
               <PressableScale
-                key={c}
-                onPress={() => void setBaseCurrency(c)}
-                style={[styles.chip, styles.chipBase, on && styles.chipOn]}
+                key={m}
+                onPress={() => setMode(m)}
+                style={[styles.chip, on && styles.chipOn]}
                 pressTint
-                accessibilityLabel={`基准币种 ${c}`}
+                accessibilityLabel={`外观：${cn}`}
               >
-                <Text style={[styles.chipCode, on && styles.chipTextOn]}>{c}</Text>
+                <Icon size={13} color={on ? colors.onInk : colors.dimInk} strokeWidth={1.8} />
+                <Text style={[styles.chipCode, on && styles.chipTextOn]}>
+                  {cn} {latin}
+                </Text>
               </PressableScale>
             );
           })}
         </View>
-        <Text style={styles.note}>净值一律按人民币折算，基准币种只改变展示符号。</Text>
+
+        <SectionLabel latin="CURRENCY" cn="币种" />
+        <PressableScale onPress={onOpenRates} style={styles.navRow} pressTint accessibilityLabel="汇率与币种">
+          <Text style={styles.navLabel}>汇率与币种</Text>
+          <DotLeader />
+          <Text style={styles.navValue}>
+            {rates.length} 种 · 基准 {baseCurrency}
+          </Text>
+          <ChevronRight size={15} color={colors.dimInk} strokeWidth={1.8} />
+        </PressableScale>
+
+        <SectionLabel latin="BILLING CYCLE" cn="账期" />
+        <FoldPicker
+          label="起始日 BILLING DAY"
+          value={billingDay === 1 ? '自然月 · 每月 1 日' : `每月 ${billingDay} 日`}
+          expanded={cycleOpen}
+          onToggle={() => setCycleOpen((o) => !o)}
+        >
+          <View style={styles.dayGrid}>
+            {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => {
+              const on = d === billingDay;
+              return (
+                <PressableScale
+                  key={d}
+                  onPress={() => {
+                    void setBillingDay(d);
+                    setCycleOpen(false);
+                  }}
+                  style={[styles.dayChip, on && styles.chipOn]}
+                  pressTint
+                  accessibilityLabel={`账期起始日 ${d} 日`}
+                >
+                  <Text style={[styles.dayChipText, on && styles.chipTextOn]}>{d}</Text>
+                </PressableScale>
+              );
+            })}
+          </View>
+        </FoldPicker>
+        <Text style={styles.note}>当前账期：{md(cycleStart)} – {md(cycleEnd)}</Text>
 
         <SectionLabel latin="DATA" cn="数据" />
         <View style={styles.rowActions}>
@@ -287,9 +208,6 @@ export function MeScreen() {
             <Text style={styles.btnText}>导入账本</Text>
           </PressableScale>
         </View>
-        <Text style={styles.dangerNote}>
-          导出成 JSON 文件留底或换机搬用；导入会整本替换当前数据，导入前先导出一份更稳。
-        </Text>
 
         <PressableScale
           onPress={confirmClear}
@@ -300,271 +218,174 @@ export function MeScreen() {
           <Trash2 size={15} color={colors.stamp} strokeWidth={1.7} />
           <Text style={styles.dangerText}>清空数据</Text>
         </PressableScale>
-        <Text style={styles.dangerNote}>删除所有资产、支出与汇率，不可恢复</Text>
 
         <View style={styles.about}>
           <DashedRule style={styles.aboutRule} />
           <Text style={styles.aboutLine}>资产账本 · ASSET STATEMENT</Text>
-          <Text style={styles.aboutLine}>凭条 · 票据质感　v0.4.0</Text>
-          <Text style={styles.aboutLine}>本地记账，数据不出设备</Text>
+          <Text style={styles.aboutLine}>凭条 · 票据质感　v0.8.12</Text>
         </View>
       </ScrollView>
     </EnterView>
   );
 }
 
-function RateRow({
-  rate,
-  onCommit,
-  onDelete,
-}: {
-  rate: Rate;
-  onCommit: (value: number) => void;
-  onDelete: () => void;
-}) {
-  const [text, setText] = useState(String(rate.toCny));
-  const isBaseCny = rate.currency === 'CNY';
-
-  // 外部（保存后 / 联网更新后）回填时同步显示。
-  useEffect(() => {
-    setText(String(rate.toCny));
-  }, [rate.toCny]);
-
-  const commit = () => {
-    const value = Number.parseFloat(text);
-    if (!Number.isFinite(value) || value <= 0) {
-      setText(String(rate.toCny));
-      return;
-    }
-    onCommit(value);
-  };
-
-  return (
-    <View style={styles.rateRow}>
-      <Text style={styles.rateCode}>{rate.currency}</Text>
-      <Text style={styles.rateName}>{currencyName(rate.currency)}</Text>
-      <DotLeader />
-      <TextInput
-        value={text}
-        onChangeText={(v) => setText(v.replace(/[^0-9.]/g, ''))}
-        onEndEditing={commit}
-        editable={!isBaseCny}
-        keyboardType="decimal-pad"
-        accessibilityLabel={`${rate.currency} 汇率`}
-        style={[styles.input, styles.rateInput, isBaseCny && styles.inputDisabled]}
-      />
-      <Text style={styles.rateSuffix}>CNY</Text>
-      {isBaseCny ? (
-        <View style={styles.trashSpacer} />
-      ) : (
-        <PressableScale
-          onPress={onDelete}
-          style={styles.trash}
-          pressTint
-          accessibilityLabel={`删除 ${rate.currency}`}
-        >
-          <Trash2 size={16} color={colors.dimInk} strokeWidth={1.7} />
-        </PressableScale>
-      )}
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.paper,
-  },
-  scroll: {
-    paddingHorizontal: H_PADDING,
-  },
-  head: {
-    alignItems: 'center',
-    paddingTop: spacing(2),
-    paddingBottom: spacing(4),
-  },
-  brandName: {
-    fontFamily: fontFamily.sansBold,
-    fontSize: 17,
-    letterSpacing: 6,
-    color: colors.ink,
-  },
-  brandSub: {
-    fontFamily: fontFamily.mono,
-    fontSize: t.tiny,
-    letterSpacing: 3,
-    color: colors.dimInk,
-    marginTop: spacing(2),
-  },
-  rateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing(1.5),
-    gap: spacing(2),
-    minHeight: 44,
-  },
-  rateCode: {
-    fontFamily: fontFamily.monoMed,
-    fontSize: 15,
-    letterSpacing: 1,
-    color: colors.ink,
-  },
-  rateName: {
-    fontFamily: fontFamily.sans,
-    fontSize: t.small,
-    color: colors.dimInk,
-    maxWidth: '30%',
-  },
-  rateSuffix: {
-    fontFamily: fontFamily.mono,
-    fontSize: t.tiny,
-    color: colors.dimInk,
-    letterSpacing: 1,
-  },
-  input: {
-    fontFamily: fontFamily.monoMed,
-    fontSize: 15,
-    color: colors.ink,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.dash,
-    minHeight: 44,
-    paddingVertical: spacing(1),
-    ...numerals,
-  },
-  inputDisabled: {
-    color: colors.dimInk,
-    borderBottomColor: colors.dashSoft,
-  },
-  rateInput: {
-    width: 88,
-    textAlign: 'right',
-  },
-  /** 44pt 命中区，但用负边距把视觉宽度收回图标大小 */
-  trash: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: -spacing(2.5),
-    marginRight: -spacing(3),
-    borderRadius: 6,
-  },
-  /** 与上面一枚的「视觉宽度」对齐（44 − 负边距共 22）*/
-  trashSpacer: {
-    width: 22,
-  },
-  rowActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing(3),
-    marginTop: spacing(3),
-  },
-  btn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing(1.5),
-    borderWidth: 1,
-    borderColor: colors.dash,
-    borderRadius: radius.ring,
-    paddingHorizontal: spacing(4),
-    minHeight: 44,
-  },
-  btnBusy: {
-    opacity: 0.7,
-  },
-  btnText: {
-    fontFamily: fontFamily.mono,
-    fontSize: t.small,
-    letterSpacing: 1,
-    color: colors.ink,
-  },
-  fxNote: {
-    fontFamily: fontFamily.mono,
-    fontSize: t.tiny,
-    letterSpacing: 0.4,
-    color: colors.dimInk,
-    marginTop: spacing(2),
-  },
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing(2),
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing(1.5),
-    borderWidth: 1,
-    borderColor: colors.dash,
-    borderRadius: radius.ring,
-    paddingHorizontal: spacing(3.5),
-    minHeight: 44,
-  },
-  chipBase: {
-    gap: 0,
-  },
-  chipOn: {
-    backgroundColor: colors.ink,
-    borderColor: colors.ink,
-  },
-  chipCode: {
-    fontFamily: fontFamily.monoMed,
-    fontSize: t.small,
-    letterSpacing: 1,
-    color: colors.ink,
-  },
-  chipName: {
-    fontFamily: fontFamily.sans,
-    fontSize: t.tiny,
-    color: colors.dimInk,
-  },
-  chipTextOn: {
-    color: colors.onInk,
-  },
-  note: {
-    fontFamily: fontFamily.sans,
-    fontSize: t.small,
-    lineHeight: t.small * 1.7,
-    color: colors.dimInk,
-    marginTop: spacing(3),
-  },
-  /** 与「联网更新汇率」同一胶囊语言，只是印上验讫章红；靠左小号，不再占整行 */
-  dangerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing(1.5),
-    alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderColor: colors.stamp,
-    borderRadius: radius.ring,
-    paddingHorizontal: spacing(3.5),
-    minHeight: 44,
-  },
-  dangerText: {
-    fontFamily: fontFamily.mono,
-    fontSize: t.small,
-    letterSpacing: 1,
-    color: colors.stamp,
-  },
-  dangerNote: {
-    fontFamily: fontFamily.sans,
-    fontSize: t.tiny,
-    color: colors.dim,
-    marginTop: spacing(2),
-  },
-  about: {
-    marginTop: spacing(8),
-    alignItems: 'center',
-    gap: spacing(1.5),
-  },
-  aboutRule: {
-    alignSelf: 'stretch',
-    marginBottom: spacing(3),
-  },
-  aboutLine: {
-    fontFamily: fontFamily.mono,
-    fontSize: t.tiny,
-    letterSpacing: 1,
-    color: colors.dimInk,
-  },
-});
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
+    root: {
+      flex: 1,
+      backgroundColor: colors.paper,
+    },
+    scroll: {
+      paddingHorizontal: H_PADDING,
+    },
+    head: {
+      alignItems: 'center',
+      paddingTop: spacing(2),
+      paddingBottom: spacing(4),
+    },
+    brandName: {
+      fontFamily: fontFamily.sansBold,
+      fontSize: 17,
+      letterSpacing: 6,
+      color: colors.ink,
+    },
+    brandSub: {
+      fontFamily: fontFamily.mono,
+      fontSize: t.tiny,
+      letterSpacing: 3,
+      color: colors.dimInk,
+      marginTop: spacing(2),
+    },
+    rowActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing(3),
+      marginTop: spacing(1),
+    },
+    btn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing(1.5),
+      borderWidth: 1,
+      borderColor: colors.dash,
+      borderRadius: radius.ring,
+      paddingHorizontal: spacing(4),
+      minHeight: 44,
+    },
+    btnText: {
+      fontFamily: fontFamily.mono,
+      fontSize: t.small,
+      letterSpacing: 1,
+      color: colors.ink,
+    },
+    chips: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing(2),
+    },
+    chip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing(1.5),
+      borderWidth: 1,
+      borderColor: colors.dash,
+      borderRadius: radius.ring,
+      paddingHorizontal: spacing(3.5),
+      minHeight: 44,
+    },
+    chipOn: {
+      backgroundColor: colors.ink,
+      borderColor: colors.ink,
+    },
+    chipCode: {
+      fontFamily: fontFamily.monoMed,
+      fontSize: t.small,
+      letterSpacing: 1,
+      color: colors.ink,
+    },
+    chipTextOn: {
+      color: colors.onInk,
+    },
+    /** 账期起始日的 1-31 日胶囊云（与「添加币种」同一语言，只装数字更小） */
+    dayGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing(1.5),
+    },
+    dayChip: {
+      minWidth: 40,
+      minHeight: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.dash,
+      borderRadius: radius.ring,
+      paddingHorizontal: spacing(2),
+    },
+    dayChipText: {
+      fontFamily: fontFamily.monoMed,
+      fontSize: t.small,
+      color: colors.ink,
+      ...numerals,
+    },
+    note: {
+      fontFamily: fontFamily.sans,
+      fontSize: t.small,
+      lineHeight: t.small * 1.7,
+      color: colors.dimInk,
+      marginTop: spacing(3),
+    },
+    /** 子页入口：与汇率行同一套「名目 …… 值」点线账，行尾换一枚向右的箭头 */
+    navRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing(2),
+      minHeight: 44,
+      paddingVertical: spacing(1.5),
+    },
+    navLabel: {
+      fontFamily: fontFamily.sansMed,
+      fontSize: t.body,
+      color: colors.ink,
+    },
+    navValue: {
+      fontFamily: fontFamily.mono,
+      fontSize: t.tiny,
+      letterSpacing: 0.5,
+      color: colors.dimInk,
+    },
+    /** 与「联网更新汇率」同一胶囊语言，只是印上验讫章红；靠左小号，不再占整行 */
+    dangerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing(1.5),
+      alignSelf: 'flex-start',
+      borderWidth: 1,
+      borderColor: colors.stamp,
+      borderRadius: radius.ring,
+      paddingHorizontal: spacing(3.5),
+      minHeight: 44,
+      marginTop: spacing(4),
+    },
+    dangerText: {
+      fontFamily: fontFamily.mono,
+      fontSize: t.small,
+      letterSpacing: 1,
+      color: colors.stamp,
+    },
+    about: {
+      marginTop: spacing(8),
+      alignItems: 'center',
+      gap: spacing(1.5),
+    },
+    aboutRule: {
+      alignSelf: 'stretch',
+      marginBottom: spacing(3),
+    },
+    aboutLine: {
+      fontFamily: fontFamily.mono,
+      fontSize: t.tiny,
+      letterSpacing: 1,
+      color: colors.dimInk,
+    },
+  });

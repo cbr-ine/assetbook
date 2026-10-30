@@ -5,6 +5,8 @@ import { BASE_CURRENCY, summarize, toCny } from '../data/sample';
 import * as repo from '../data/repo';
 import type { BackupPayload } from '../data/repo';
 import { openDb } from '../data/db';
+import { billingCycleStart, round2 } from '../utils/format';
+import { clearManagedPhotos, removeManagedPhoto } from '../utils/photos';
 
 /**
  * 全 app 的内存状态 + 持久化动作。
@@ -41,6 +43,8 @@ export interface AppContextValue {
   monthSpendCny: number;
   /** 月度预算（人民币）；null = 未设置 */
   monthlyBudgetCny: number | null;
+  /** 账期起始日（1-31；1 = 自然月）。预算与统计的月口径按它滚动 */
+  billingDay: number;
 
   saveAsset: (item: AssetItem) => Promise<void>;
   deleteAsset: (id: string) => Promise<void>;
@@ -52,6 +56,8 @@ export interface AppContextValue {
   updateExpense: (id: string, amount: number, note: string) => Promise<void>;
   /** 设月度预算；null 清除 */
   setMonthlyBudget: (cny: number | null) => Promise<void>;
+  /** 设账期起始日（1-31）；预算与统计口径立即跟随 */
+  setBillingDay: (day: number) => Promise<void>;
   /** 导出整本账（JSON 结构，由调用方负责写文件/分享） */
   exportBackup: () => Promise<BackupPayload>;
   /** 导入备份：整本替换后重载 */
@@ -76,6 +82,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [baseCurrency, setBase] = useState<string>(BASE_CURRENCY);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
   const [monthlyBudgetCny, setBudgetState] = useState<number | null>(null);
+  const [billingDay, setBillingDayState] = useState(1);
 
   // 最新一份 assets/rates 的镜像：动作里算「下一份快照」用，避免 setState 闭包读到旧值
   const assetsRef = useRef(assets);
@@ -86,12 +93,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   expensesRef.current = expenses;
 
   const reload = useCallback(async () => {
-    const [a, e, r, b, budget] = await Promise.all([
+    const [a, e, r, b, budget, billing] = await Promise.all([
       repo.listAssets(),
       repo.listExpenses(),
       repo.listRates(),
       repo.getBaseCurrency(),
       repo.getMonthlyBudget(),
+      repo.getBillingDay(),
     ]);
     // 任何一次重载都顺手把「今天」的净值快照落一行（幂等）：开机首开 / 导入 / 清空都会走到
     await repo.upsertTodaySnapshot(totalCnyOf(a, r));
@@ -101,6 +109,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setRates(r);
     setBase(b);
     setBudgetState(budget);
+    setBillingDayState(billing);
     setSnapshots(snaps);  }, []);
 
   /** 净值变了之后调用：把今天的快照写成最新值，内存里的走势同步替换末位。 */
@@ -161,27 +170,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return out;
   }, [expenses, rates]);
 
-  /** 本月支出合计（人民币）：预算用量按它算 */
+  /** 本账期支出合计（人民币）：预算用量按它算。账期 = 起始日起滚一个月，起始 1 即自然月。 */
   const monthSpendCny = useMemo(() => {
-    const now = new Date();
+    const start = billingCycleStart(new Date(), billingDay).getTime();
     let sum = 0;
     for (const e of expenses) {
-      const d = new Date(e.date);
-      if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()) {
+      if (new Date(e.date).getTime() >= start) {
         sum += toCny(e.amount, e.currency, rates);
       }
     }
     return sum;
-  }, [expenses, rates]);
+  }, [expenses, rates, billingDay]);
 
   const saveAsset = useCallback(
     async (item: AssetItem) => {
       const saved = await repo.upsertAsset(item);
       setAssets((prev) => {
-        const idx = prev.findIndex((a) => a.id === saved.id);
-        if (idx < 0) return [...prev, saved];
-        const next = prev.slice();
-        next[idx] = saved;
+        const next = prev.filter((a) => a.id !== saved.id);
+        next.push(saved);
+        next.sort((a, b) => {
+          const ga = a.group === 'liquid' ? 0 : 1;
+          const gb = b.group === 'liquid' ? 0 : 1;
+          if (ga !== gb) return ga - gb;
+          const ds = (a.sort ?? 0) - (b.sort ?? 0);
+          if (ds !== 0) return ds;
+          return a.name.localeCompare(b.name);
+        });
         return next;
       });
       const cur = assetsRef.current;
@@ -196,11 +210,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteAsset = useCallback(
     async (id: string) => {
       await repo.deleteAsset(id);
+      const gone = assetsRef.current.find((a) => a.id === id);
       setAssets((prev) => prev.filter((a) => a.id !== id));
       await syncSnapshot(
         assetsRef.current.filter((a) => a.id !== id),
         ratesRef.current,
       );
+      // 实物照片文件跟着资产走，别留孤儿
+      if (gone) void removeManagedPhoto(gone.photoUri);
     },
     [syncSnapshot],
   );
@@ -220,13 +237,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (accountId: string, amount: number, note: string, date: string) => {
       const expense = await repo.addExpense(accountId, amount, note, date);
       setExpenses((prev) => [expense, ...prev]);
-      // 记账即扣减账户余额（金额已是正数，币种与账户一致）。
+      // 记账即扣减账户余额（金额已是正数，币种与账户一致）；
+      // 取整到分，与 repo 里的 ROUND(value - ?, 2) 保持同一个事实。
       setAssets((prev) =>
-        prev.map((a) => (a.id === accountId ? { ...a, value: a.value - expense.amount } : a)),
+        prev.map((a) => (a.id === accountId ? { ...a, value: round2(a.value - expense.amount) } : a)),
       );
       await syncSnapshot(
         assetsRef.current.map((a) =>
-          a.id === accountId ? { ...a, value: a.value - expense.amount } : a,
+          a.id === accountId ? { ...a, value: round2(a.value - expense.amount) } : a,
         ),
         ratesRef.current,
       );
@@ -239,13 +257,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const removed = await repo.deleteExpense(id);
       if (!removed) return;
       setExpenses((prev) => prev.filter((e) => e.id !== id));
-      // 删除即回滚：把金额加回原账户。
+      // 删除即回滚：把金额加回原账户（取整到分，同 repo 的 ROUND）。
       setAssets((prev) =>
-        prev.map((a) => (a.id === removed.accountId ? { ...a, value: a.value + removed.amount } : a)),
+        prev.map((a) => (a.id === removed.accountId ? { ...a, value: round2(a.value + removed.amount) } : a)),
       );
       await syncSnapshot(
         assetsRef.current.map((a) =>
-          a.id === removed.accountId ? { ...a, value: a.value + removed.amount } : a,
+          a.id === removed.accountId ? { ...a, value: round2(a.value + removed.amount) } : a,
         ),
         ratesRef.current,
       );
@@ -263,9 +281,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const delta = prevAmount == null ? 0 : updated.amount - prevAmount;
       if (delta !== 0) {
         const acct = updated.accountId;
-        setAssets((prev) => prev.map((a) => (a.id === acct ? { ...a, value: a.value - delta } : a)));
+        setAssets((prev) => prev.map((a) => (a.id === acct ? { ...a, value: round2(a.value - delta) } : a)));
         await syncSnapshot(
-          assetsRef.current.map((a) => (a.id === acct ? { ...a, value: a.value - delta } : a)),
+          assetsRef.current.map((a) => (a.id === acct ? { ...a, value: round2(a.value - delta) } : a)),
           ratesRef.current,
         );
       }
@@ -299,11 +317,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setBudgetState(cny);
   }, []);
 
+  const setBillingDay = useCallback(async (day: number) => {
+    await repo.setBillingDay(day);
+    setBillingDayState(day);
+  }, []);
+
   const exportBackup = useCallback(() => repo.exportAll(), []);
 
   const importBackup = useCallback(
     async (payload: BackupPayload) => {
       await repo.importAll(payload);
+      // 整本替换后，旧资产的照片文件全成了孤儿（照片不随备份搬家），一并回收
+      void clearManagedPhotos();
       await reload();
     },
     [reload],
@@ -311,6 +336,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const clearAll = useCallback(async () => {
     await repo.clearAll();
+    void clearManagedPhotos();
     await reload();
   }, [reload]);
 
@@ -327,6 +353,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       snapshots,
       monthSpendCny,
       monthlyBudgetCny,
+      billingDay,
       saveAsset,
       deleteAsset,
       reorderAssets,
@@ -334,6 +361,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deleteExpense,
       updateExpense,
       setMonthlyBudget,
+      setBillingDay,
       exportBackup,
       importBackup,
       saveRate,
@@ -355,6 +383,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       snapshots,
       monthSpendCny,
       monthlyBudgetCny,
+      billingDay,
       saveAsset,
       deleteAsset,
       reorderAssets,
@@ -362,6 +391,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deleteExpense,
       updateExpense,
       setMonthlyBudget,
+      setBillingDay,
       exportBackup,
       importBackup,
       saveRate,

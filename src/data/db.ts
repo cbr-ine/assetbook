@@ -42,11 +42,18 @@ async function initDb(): Promise<SQLite.SQLiteDatabase> {
   return db;
 }
 
-/** 旧库补列：icon_key 是类目图标的手选覆盖，空着走名称匹配。 */
+/** 旧库补列：icon_key 是类目图标的手选覆盖；area_m2 / region 是房产的面积与区域。 */
 async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
   const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${TABLE_ASSETS})`);
-  if (!cols.some((c) => c.name === 'icon_key')) {
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has('icon_key')) {
     await db.execAsync(`ALTER TABLE ${TABLE_ASSETS} ADD COLUMN icon_key TEXT`);
+  }
+  if (!names.has('area_m2')) {
+    await db.execAsync(`ALTER TABLE ${TABLE_ASSETS} ADD COLUMN area_m2 REAL`);
+  }
+  if (!names.has('region')) {
+    await db.execAsync(`ALTER TABLE ${TABLE_ASSETS} ADD COLUMN region TEXT`);
   }
 }
 

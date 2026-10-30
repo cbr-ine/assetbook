@@ -1,13 +1,24 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Check, Trash2, X } from 'lucide-react-native';
+import { Check, Plus, Trash2, X } from 'lucide-react-native';
 
-import { ICON_GROUP_META, ICONS, resolveIcon } from '../data/icons';
+import {
+  ICON_GROUP_META,
+  ICONS,
+  customIconEntry,
+  customIconKey,
+  parseCustomIconKey,
+  resolveIcon,
+} from '../data/icons';
+import { listCustomIcons, persistCustomIcon, removeCustomIcon } from '../utils/customIcons';
 import { NEGATIVE_TYPES, TYPE_GROUP, type AssetGroup, type AssetItem, type AssetType } from '../data/types';
 import { useApp } from '../state/AppContext';
-import { colors, fontFamily, numerals, radius, spacing, type as t } from '../theme';
+import { fontFamily, numerals, radius, spacing, type as t, type Palette } from '../theme';
+import { useTheme, useThemedStyles } from '../state/ThemeContext';
 import { ASSET_TYPES, ASSET_TYPE_LABEL } from '../utils/labels';
+import { round2 } from '../utils/format';
+import { migratePhotoIfNeeded, persistPhoto, removeManagedPhoto } from '../utils/photos';
 import { useConfirm } from './Confirm';
 import { IconFace } from './AssetIcon';
 import { PressableScale } from './Motion';
@@ -35,6 +46,8 @@ function sanitizeAmount(text: string): string {
  * 凭条质感：纸底、虚线分段、等宽输入；分组与类型、币种都是横向胶囊选择。
  */
 export function AssetEditor({ visible, initial, defaultGroup, onClose }: Props) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const { rates, baseCurrency, saveAsset, deleteAsset } = useApp();
   const { confirm } = useConfirm();
 
@@ -49,6 +62,9 @@ export function AssetEditor({ visible, initial, defaultGroup, onClose }: Props) 
   const nameRef = useRef('');
   const amountRef = useRef('');
   const noteRef = useRef('');
+  /** 房产的区域与建筑面积，同样走 ref */
+  const regionRef = useRef('');
+  const areaRef = useRef('');
   /** 打开 / 换编辑对象时自增，驱动 LocalInput 回填 */
   const [revision, setRevision] = useState(0);
   const [currency, setCurrency] = useState('CNY');
@@ -63,11 +79,20 @@ export function AssetEditor({ visible, initial, defaultGroup, onClose }: Props) 
   useEffect(() => {
     if (!visible) return;
     nameRef.current = initial?.name ?? '';
-    amountRef.current = initial ? String(Math.abs(initial.value)) : '';
+    // 回填先取整到分：余额可能是扣款扣出来的浮点值（-0.3000…04），别让残渣进输入框
+    amountRef.current = initial ? String(round2(Math.abs(initial.value))) : '';
     noteRef.current = initial?.note ?? '';
+    regionRef.current = initial?.region ?? '';
+    areaRef.current = initial?.areaM2 != null ? String(initial.areaM2) : '';
     setCurrency(initial?.currency ?? baseCurrency);
     setType(initial?.type ?? (defaultGroup === 'fixed' ? 'physical' : 'ewallet'));
     setPhotoUri(initial?.photoUri);
+    // 旧账的照片可能还躺在缓存目录（清缓存即失效），编辑一次就搬进文档目录
+    if (initial?.photoUri) {
+      void migratePhotoIfNeeded(initial.photoUri).then((next) => {
+        if (next && next !== initial.photoUri) setPhotoUri(next);
+      });
+    }
     setIconKey(initial?.iconKey);
     setIconOpen(false);
     setRevision((r) => r + 1);
@@ -79,7 +104,15 @@ export function AssetEditor({ visible, initial, defaultGroup, onClose }: Props) 
       quality: 0.7,
     });
     if (!res.canceled && res.assets.length > 0) {
-      setPhotoUri(res.assets[0].uri);
+      // 相册给的 URI 在缓存目录，随时可能被系统清掉：拷进文档目录再存
+      try {
+        const next = await persistPhoto(res.assets[0].uri);
+        // 连续换图时，把上一张还没落库的临时文件清掉（原账的照片不动）
+        if (photoUri && photoUri !== initial?.photoUri) void removeManagedPhoto(photoUri);
+        setPhotoUri(next);
+      } catch {
+        setPhotoUri(res.assets[0].uri); // 拷不进去就退回旧行为，别挡着记账
+      }
     }
   };
 
@@ -87,6 +120,7 @@ export function AssetEditor({ visible, initial, defaultGroup, onClose }: Props) 
     const num = Number.parseFloat(amountRef.current) || 0;
     // 欠款类（信用卡/花呗/白条、应付）统一存负数（types.ts 约定），其余按输入原样。
     const value = NEGATIVE_TYPES.includes(type) ? -Math.abs(num) : num;
+    const area = Number.parseFloat(areaRef.current);
     const item: AssetItem = {
       id: initial?.id ?? '',
       name: nameRef.current.trim() || '未命名资产',
@@ -98,8 +132,14 @@ export function AssetEditor({ visible, initial, defaultGroup, onClose }: Props) 
       iconKey,
       note: noteRef.current.trim() || undefined,
       sort: initial?.sort ?? 0,
+      areaM2: Number.isFinite(area) && area > 0 ? area : undefined,
+      region: regionRef.current.trim() || undefined,
     };
     await saveAsset(item);
+    // 照片换过 / 移除过时，把旧文件清掉（受管的才清），不让文档目录积孤儿
+    if (initial?.photoUri && initial.photoUri !== photoUri) {
+      void removeManagedPhoto(initial.photoUri);
+    }
     onClose();
   };
 
@@ -198,6 +238,34 @@ export function AssetEditor({ visible, initial, defaultGroup, onClose }: Props) 
 
         {type === 'physical' ? (
           <>
+            <SectionLabel latin="PROPERTY" cn="房产信息" />
+            <Field label="区域 REGION">
+              <LocalInput
+                revision={revision}
+                initial={initial?.region ?? ''}
+                onText={(v) => (regionRef.current = v)}
+                placeholder="例如：杭州·西湖区"
+                placeholderTextColor={colors.dimInk}
+                style={styles.input}
+              />
+            </Field>
+            <Field label="建筑面积 AREA（㎡）">
+              <LocalInput
+                revision={revision}
+                initial={initial?.areaM2 != null ? String(initial.areaM2) : ''}
+                onText={(v) => (areaRef.current = v)}
+                sanitize={sanitizeAmount}
+                placeholder="0"
+                placeholderTextColor={colors.dimInk}
+                keyboardType="decimal-pad"
+                style={[styles.input, styles.amountInput]}
+              />
+            </Field>
+          </>
+        ) : null}
+
+        {type === 'physical' ? (
+          <>
             <SectionLabel latin="PHOTO" cn="实物照片" />
             <View style={styles.photoRow}>
               {photoUri ? (
@@ -244,6 +312,7 @@ export function AssetEditor({ visible, initial, defaultGroup, onClose }: Props) 
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -312,8 +381,45 @@ function IconPicker({
   onSelect: (id: string) => void;
   onAuto: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const { confirm } = useConfirm();
   const current = resolveIcon({ name, type, currency, iconKey });
   const auto = iconKey == null;
+
+  // 自定义上传的图标：展开时读一次目录（上传 / 删除后本地同步增删）
+  const [customs, setCustoms] = useState<string[]>([]);
+  useEffect(() => {
+    if (open) void listCustomIcons().then(setCustoms);
+  }, [open]);
+
+  const upload = async () => {
+    const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+    if (res.canceled || res.assets.length === 0) return;
+    let uri = res.assets[0].uri;
+    try {
+      uri = await persistCustomIcon(uri);
+    } catch {
+      /* 拷不进文档目录（如 web 预览）就先用原 URI，本次会话内可用 */
+    }
+    setCustoms((prev) => [uri, ...prev.filter((u) => u !== uri)]);
+    onSelect(customIconKey(uri));
+  };
+
+  const removeCustom = (uri: string) => {
+    void confirm({
+      title: '删除自定义图标',
+      message: '正在使用这枚图标的资产会退回按名称自动匹配。',
+      confirmText: '删除',
+      destructive: true,
+    }).then((ok) => {
+      if (!ok) return;
+      void removeCustomIcon(uri);
+      setCustoms((prev) => prev.filter((u) => u !== uri));
+      if (parseCustomIconKey(iconKey ?? '') === uri) onAuto();
+    });
+  };
+
   return (
     <View style={styles.iconBlock}>
       <PressableScale onPress={onToggle} style={styles.iconHead} pressTint accessibilityLabel="更换类目图标">
@@ -328,6 +434,37 @@ function IconPicker({
           <PressableScale onPress={onAuto} style={[styles.iconAuto, auto && styles.iconAutoOn]} pressTint>
             <Text style={[styles.iconAutoText, auto && styles.iconAutoTextOn]}>跟名称走</Text>
           </PressableScale>
+
+          <View style={styles.iconGroup}>
+            <Text style={styles.iconGroupLabel}>自定义  CUSTOM</Text>
+            <View style={styles.iconGrid}>
+              <PressableScale
+                onPress={() => void upload()}
+                style={[styles.iconCell, styles.iconCellUpload]}
+                pressTint
+                accessibilityLabel="上传自定义图标"
+              >
+                <Plus size={18} color={colors.dimInk} strokeWidth={1.8} />
+              </PressableScale>
+              {customs.map((uri) => {
+                const key = customIconKey(uri);
+                const on = current.id === key && !auto;
+                return (
+                  <PressableScale
+                    key={uri}
+                    onPress={() => onSelect(key)}
+                    onLongPress={() => removeCustom(uri)}
+                    style={[styles.iconCell, on && styles.iconCellOn]}
+                    pressTint
+                    accessibilityLabel="自定义图标"
+                  >
+                    <IconFace icon={customIconEntry(uri)} size={36} />
+                  </PressableScale>
+                );
+              })}
+            </View>
+          </View>
+
           {ICON_GROUP_META.map((g) => (
             <View key={g.id} style={styles.iconGroup}>
               <Text style={styles.iconGroupLabel}>
@@ -368,6 +505,7 @@ function ChipRow<T extends string>({
   onSelect: (value: T) => void;
   labelOf?: (value: T) => string;
 }) {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.chips}>
       {options.map((opt) => {
@@ -387,7 +525,8 @@ function ChipRow<T extends string>({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   scroll: {
     paddingHorizontal: spacing(6),
     paddingBottom: spacing(10),
@@ -443,7 +582,7 @@ const styles = StyleSheet.create({
   amountInput: {
     flex: 1,
     fontFamily: fontFamily.monoMed,
-    fontSize: 22,
+    fontSize: 17,
     ...numerals,
   },
   hint: {
@@ -614,5 +753,15 @@ const styles = StyleSheet.create({
   },
   iconCellOn: {
     borderColor: colors.ink,
+  },
+  /** 上传格：虚线空章，与「被拖行留下的虚线空单」同一语言 */
+  iconCellUpload: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.dash,
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

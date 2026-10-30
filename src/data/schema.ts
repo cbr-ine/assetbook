@@ -21,6 +21,10 @@ export const META_BASE_CURRENCY = 'base_currency';
 export const META_SEEDED = 'seeded';
 /** 月度预算（人民币计） */
 export const META_MONTHLY_BUDGET = 'monthly_budget_cny';
+/** 外观偏好（light / dark）：设备级设置，不随账本备份搬家 */
+export const META_THEME = 'theme';
+/** 账期起始日（1-31，1 = 自然月）：预算与统计的月口径按它滚动 */
+export const META_BILLING_DAY = 'billing_day';
 
 export const CREATE_TABLES_SQL = `
 CREATE TABLE IF NOT EXISTS ${TABLE_ASSETS} (

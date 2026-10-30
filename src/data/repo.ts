@@ -4,8 +4,10 @@ import { BASE_CURRENCY } from './sample';
 import { openDb } from './db';
 import {
   META_BASE_CURRENCY,
+  META_BILLING_DAY,
   META_MONTHLY_BUDGET,
   META_SEEDED,
+  META_THEME,
   TABLE_ASSETS,
   TABLE_EXPENSES,
   TABLE_META,
@@ -32,6 +34,8 @@ interface AssetRow {
   icon_key: string | null;
   note: string | null;
   sort: number;
+  area_m2: number | null;
+  region: string | null;
 }
 
 interface ExpenseRow {
@@ -67,6 +71,8 @@ function mapAsset(r: AssetRow): AssetItem {
     iconKey: r.icon_key ?? undefined,
     note: r.note ?? undefined,
     sort: r.sort,
+    areaM2: r.area_m2 ?? undefined,
+    region: r.region ?? undefined,
   };
 }
 
@@ -113,24 +119,43 @@ export async function listAssets(): Promise<AssetItem[]> {
 export async function upsertAsset(item: AssetItem): Promise<AssetItem> {
   const db = await openDb();
   const withId: AssetItem = item.id ? item : { ...item, id: genId('a') };
+  const existing = withId.id
+    ? await db.getFirstAsync<{ asset_group: string; sort: number }>(
+        `SELECT asset_group, sort FROM ${TABLE_ASSETS} WHERE id = ?`,
+        [withId.id],
+      )
+    : null;
+  // 新增、或改类型换了组：接到该组末尾。同组编辑保留原来的 sort，拖过的顺序不被保存冲掉。
+  const moved = !existing || existing.asset_group !== withId.group;
+  let sort = existing?.sort ?? 0;
+  if (moved) {
+    const row = await db.getFirstAsync<{ m: number | null }>(
+      `SELECT MAX(sort) AS m FROM ${TABLE_ASSETS} WHERE asset_group = ? AND id != ?`,
+      [withId.group, withId.id],
+    );
+    sort = (row?.m ?? -1) + 1;
+  }
+  const saved: AssetItem = { ...withId, sort };
   await db.runAsync(
     `INSERT OR REPLACE INTO ${TABLE_ASSETS}
-       (id, name, value, currency, asset_group, type, photo_uri, icon_key, note, sort)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, name, value, currency, asset_group, type, photo_uri, icon_key, note, sort, area_m2, region)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      withId.id,
-      withId.name,
-      withId.value,
-      withId.currency,
-      withId.group,
-      withId.type,
-      withId.photoUri ?? null,
-      withId.iconKey ?? null,
-      withId.note ?? null,
-      withId.sort ?? 0,
+      saved.id,
+      saved.name,
+      saved.value,
+      saved.currency,
+      saved.group,
+      saved.type,
+      saved.photoUri ?? null,
+      saved.iconKey ?? null,
+      saved.note ?? null,
+      sort,
+      saved.areaM2 ?? null,
+      saved.region ?? null,
     ],
   );
-  return withId;
+  return saved;
 }
 
 export async function deleteAsset(id: string): Promise<void> {
@@ -184,7 +209,11 @@ export async function addExpense(
        VALUES (?, ?, ?, ?, ?, ?)`,
       [expense.id, expense.amount, expense.currency, expense.note, expense.date, expense.accountId],
     );
-    await db.runAsync(`UPDATE ${TABLE_ASSETS} SET value = value - ? WHERE id = ?`, [expense.amount, accountId]);
+    // ROUND 到分：扣款是浮点减法，不取整的话 0.1 型残渣会在库里越积越长
+    await db.runAsync(`UPDATE ${TABLE_ASSETS} SET value = ROUND(value - ?, 2) WHERE id = ?`, [
+      expense.amount,
+      accountId,
+    ]);
   });
 
   return expense;
@@ -199,7 +228,7 @@ export async function deleteExpense(id: string): Promise<Expense | null> {
 
   await db.withTransactionAsync(async () => {
     await db.runAsync(`DELETE FROM ${TABLE_EXPENSES} WHERE id = ?`, [id]);
-    await db.runAsync(`UPDATE ${TABLE_ASSETS} SET value = value + ? WHERE id = ?`, [
+    await db.runAsync(`UPDATE ${TABLE_ASSETS} SET value = ROUND(value + ?, 2) WHERE id = ?`, [
       expense.amount,
       expense.accountId,
     ]);
@@ -231,7 +260,7 @@ export async function updateExpense(
     ]);
     const diff = next - expense.amount;
     if (diff !== 0) {
-      await db.runAsync(`UPDATE ${TABLE_ASSETS} SET value = value - ? WHERE id = ?`, [
+      await db.runAsync(`UPDATE ${TABLE_ASSETS} SET value = ROUND(value - ?, 2) WHERE id = ?`, [
         diff,
         expense.accountId,
       ]);
@@ -282,6 +311,26 @@ export async function setBaseCurrency(currency: string): Promise<void> {
   ]);
 }
 
+// —— 外观（meta）——
+
+/** 读外观偏好；旧库 / 未设置按日间。 */
+export async function getThemeMode(): Promise<'light' | 'dark'> {
+  const db = await openDb();
+  const row = await db.getFirstAsync<MetaRow>(
+    `SELECT * FROM ${TABLE_META} WHERE meta_key = ?`,
+    [META_THEME],
+  );
+  return row?.meta_value === 'dark' ? 'dark' : 'light';
+}
+
+export async function setThemeMode(mode: 'light' | 'dark'): Promise<void> {
+  const db = await openDb();
+  await db.runAsync(`INSERT OR REPLACE INTO ${TABLE_META} (meta_key, meta_value) VALUES (?, ?)`, [
+    META_THEME,
+    mode,
+  ]);
+}
+
 // —— 月度预算 ——
 
 /** 返回 null 表示没设过。 */
@@ -305,6 +354,28 @@ export async function setMonthlyBudget(cny: number | null): Promise<void> {
   await db.runAsync(`INSERT OR REPLACE INTO ${TABLE_META} (meta_key, meta_value) VALUES (?, ?)`, [
     META_MONTHLY_BUDGET,
     String(cny),
+  ]);
+}
+
+// —— 账期 ——
+
+/** 账期起始日（1-31；1 = 自然月）。库里脏值 / 未设置都回落到 1。 */
+export async function getBillingDay(): Promise<number> {
+  const db = await openDb();
+  const row = await db.getFirstAsync<MetaRow>(
+    `SELECT * FROM ${TABLE_META} WHERE meta_key = ?`,
+    [META_BILLING_DAY],
+  );
+  const n = Number(row?.meta_value);
+  return Number.isInteger(n) && n >= 1 && n <= 31 ? n : 1;
+}
+
+export async function setBillingDay(day: number): Promise<void> {
+  const db = await openDb();
+  const d = Math.min(31, Math.max(1, Math.round(day)));
+  await db.runAsync(`INSERT OR REPLACE INTO ${TABLE_META} (meta_key, meta_value) VALUES (?, ?)`, [
+    META_BILLING_DAY,
+    String(d),
   ]);
 }
 
@@ -353,6 +424,8 @@ export interface BackupPayload {
   meta: {
     baseCurrency: string;
     monthlyBudgetCny: number | null;
+    /** 账期起始日；旧版备份没有这个字段 */
+    billingDay?: number | null;
   };
 }
 
@@ -365,11 +438,13 @@ export async function exportAll(): Promise<BackupPayload> {
     listRates(),
     listSnapshots(1000),
   ]);
-  const [baseRow, budgetRow] = await Promise.all([
+  const [baseRow, budgetRow, billingRow] = await Promise.all([
     db.getFirstAsync<MetaRow>(`SELECT * FROM ${TABLE_META} WHERE meta_key = ?`, [META_BASE_CURRENCY]),
     db.getFirstAsync<MetaRow>(`SELECT * FROM ${TABLE_META} WHERE meta_key = ?`, [META_MONTHLY_BUDGET]),
+    db.getFirstAsync<MetaRow>(`SELECT * FROM ${TABLE_META} WHERE meta_key = ?`, [META_BILLING_DAY]),
   ]);
   const budget = budgetRow ? Number(budgetRow.meta_value) : null;
+  const billingDay = Number(billingRow?.meta_value);
   return {
     app: 'assetbook',
     version: 1,
@@ -381,6 +456,7 @@ export async function exportAll(): Promise<BackupPayload> {
     meta: {
       baseCurrency: baseRow?.meta_value ?? BASE_CURRENCY,
       monthlyBudgetCny: Number.isFinite(budget) && budget != null && budget > 0 ? budget : null,
+      billingDay: Number.isInteger(billingDay) && billingDay >= 1 && billingDay <= 31 ? billingDay : null,
     },
   };
 }
@@ -406,7 +482,12 @@ export async function importAll(payload: BackupPayload): Promise<void> {
     await db.runAsync(`DELETE FROM ${TABLE_ASSETS}`);
     await db.runAsync(`DELETE FROM ${TABLE_RATES}`);
     await db.runAsync(`DELETE FROM ${TABLE_SNAPSHOTS}`);
-    await db.runAsync(`DELETE FROM ${TABLE_META} WHERE meta_key != ?`, [META_SEEDED]);
+    // 外观是设备偏好不是账本内容：导入别人的备份不换自己的纸色；
+    // 账期同理只在备份里带了才跟着走（旧版备份没有就保持本机的）
+    await db.runAsync(
+      `DELETE FROM ${TABLE_META} WHERE meta_key != ? AND meta_key != ? AND meta_key != ?`,
+      [META_SEEDED, META_THEME, META_BILLING_DAY],
+    );
 
     for (const a of payload.assets) {
       // 手改过 / 旧版的备份可能带非法 type、group：type 兜底成 cash，group 一律由类型推导，
@@ -415,9 +496,9 @@ export async function importAll(payload: BackupPayload): Promise<void> {
       const value = NEGATIVE_TYPES.includes(t) ? -Math.abs(a.value) : a.value;
       await db.runAsync(
         `INSERT OR REPLACE INTO ${TABLE_ASSETS}
-           (id, name, value, currency, asset_group, type, photo_uri, icon_key, note, sort)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [a.id, a.name, value, a.currency, TYPE_GROUP[t], t, a.photoUri ?? null, a.iconKey ?? null, a.note ?? null, a.sort ?? 0],
+           (id, name, value, currency, asset_group, type, photo_uri, icon_key, note, sort, area_m2, region)
+         VALUES (?, ?, ROUND(?, 2), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [a.id, a.name, a.value, a.currency, TYPE_GROUP[t], t, a.photoUri ?? null, a.iconKey ?? null, a.note ?? null, a.sort ?? 0, a.areaM2 ?? null, a.region ?? null],
       );
     }
     for (const e of payload.expenses) {
@@ -448,6 +529,13 @@ export async function importAll(payload: BackupPayload): Promise<void> {
       await db.runAsync(`INSERT OR REPLACE INTO ${TABLE_META} (meta_key, meta_value) VALUES (?, ?)`, [
         META_MONTHLY_BUDGET,
         String(budget),
+      ]);
+    }
+    const billingDay = payload.meta?.billingDay;
+    if (billingDay != null && Number.isInteger(billingDay) && billingDay >= 1 && billingDay <= 31) {
+      await db.runAsync(`INSERT OR REPLACE INTO ${TABLE_META} (meta_key, meta_value) VALUES (?, ?)`, [
+        META_BILLING_DAY,
+        String(billingDay),
       ]);
     }
   });

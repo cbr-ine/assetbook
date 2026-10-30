@@ -5,8 +5,9 @@ import { Delete, X } from 'lucide-react-native';
 import { useApp } from '../state/AppContext';
 import { toCny } from '../data/sample';
 import type { AssetItem, Expense } from '../data/types';
-import { colors, fontFamily, numerals, radius, spacing, type as t } from '../theme';
-import { currencySymbol, formatFixed, formatNumber, formatRelativeDay } from '../utils/format';
+import { fontFamily, numerals, radius, spacing, type as t, type Palette } from '../theme';
+import { useTheme, useThemedStyles } from '../state/ThemeContext';
+import { billingCycleStart, currencySymbol, formatFixed, formatNumber, formatRelativeDay } from '../utils/format';
 import { FoldPicker } from './FoldPicker';
 import { PressableScale } from './Motion';
 import { RollingNumber } from './RollingNumber';
@@ -37,7 +38,8 @@ function localIso(d: Date): string {
  * 金额逐位滚动；升降由 Sheet 自绘（0.28s 升 / 0.2s 纱幕，无下滑关闭）。
  */
 export function ExpenseSheet({ visible, onClose, edit = null }: Props) {
-  const { assets, addExpense, updateExpense, rates, monthSpendCny, monthlyBudgetCny } = useApp();
+  const styles = useThemedStyles(createStyles);
+  const { assets, addExpense, updateExpense, rates, monthSpendCny, monthlyBudgetCny, billingDay } = useApp();
   const toast = useToast();
   const accounts = useMemo(() => assets.filter((a) => a.group === 'liquid'), [assets]);
 
@@ -90,13 +92,16 @@ export function ExpenseSheet({ visible, onClose, edit = null }: Props) {
 
   const date = localIso(new Date(Date.now() - dayOffset * 24 * 60 * 60 * 1000));
 
-  /** 记完 / 改完一笔，看本月花销是否恰好跨过预算线；只在跨越那一刻提醒一次 */
-  const maybeBudgetToast = (deltaCny: number, monthKey: string) => {
-    if (monthlyBudgetCny == null || monthKey !== localIso(new Date()).slice(0, 7)) return;
+  /** 记完 / 改完一笔，看本账期花销是否恰好跨过预算线；只在跨越那一刻提醒一次。
+   *  补记上一个账期的旧支出不算进来（按支出自身日期归期）。 */
+  const maybeBudgetToast = (deltaCny: number, expenseDate: string) => {
+    if (monthlyBudgetCny == null) return;
+    const start = billingCycleStart(new Date(), billingDay).getTime();
+    if (new Date(expenseDate).getTime() < start) return;
     const after = monthSpendCny + deltaCny;
     if (monthSpendCny <= monthlyBudgetCny && after > monthlyBudgetCny) {
       toast.show(
-        `本月已超预算：用了 ¥${formatNumber(Math.round(after))} / ¥${formatNumber(monthlyBudgetCny)}`,
+        `本账期已超预算：用了 ¥${formatNumber(Math.round(after))} / ¥${formatNumber(monthlyBudgetCny)}`,
       );
     }
   };
@@ -107,11 +112,11 @@ export function ExpenseSheet({ visible, onClose, edit = null }: Props) {
       await updateExpense(edit.id, amount, note.trim());
       maybeBudgetToast(
         toCny(amount, edit.currency, rates) - toCny(edit.amount, edit.currency, rates),
-        edit.date.slice(0, 7),
+        edit.date,
       );
     } else if (account) {
       await addExpense(account.id, amount, note.trim(), date);
-      maybeBudgetToast(toCny(amount, account.currency, rates), date.slice(0, 7));
+      maybeBudgetToast(toCny(amount, account.currency, rates), date);
     }
     onClose();
   };
@@ -195,6 +200,8 @@ export function ExpenseSheet({ visible, onClose, edit = null }: Props) {
 
 /** 弹层头：关闭键 + 标题，与金额输入无关，memo 住不跟着敲键重渲染 */
 const SheetHead = memo(function SheetHead({ onClose, title }: { onClose: () => void; title: string }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.head}>
       <PressableScale onPress={onClose} style={styles.iconBtn} accessibilityLabel="关闭">
@@ -214,6 +221,7 @@ const OriginalLine = memo(function OriginalLine({
   accountName: string;
   day: string;
 }) {
+  const styles = useThemedStyles(createStyles);
   return (
     <>
       <Text style={styles.fieldLabel}>原单 ORIGINAL</Text>
@@ -239,6 +247,7 @@ const AccountChips = memo(function AccountChips({
   selectedId: string;
   onPick: (id: string) => void;
 }) {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.chips}>
       {accounts.map((a) => {
@@ -269,6 +278,8 @@ const NoteField = memo(function NoteField({
   note: string;
   onChange: (s: string) => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
     <>
       <Text style={styles.fieldLabel}>备注 NOTE</Text>
@@ -293,6 +304,7 @@ const DateChips = memo(function DateChips({
   onSet: (off: number) => void;
   label: string;
 }) {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.chips}>
       {[0, 1].map((off) => {
@@ -317,6 +329,8 @@ const DateChips = memo(function DateChips({
 
 /** 数字键盘：敲键时唯一不该动的大块子树 */
 const Keypad = memo(function Keypad({ onKey }: { onKey: (k: string) => void }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.keypad}>
       {KEYS.map((k) => (
@@ -338,7 +352,8 @@ const Keypad = memo(function Keypad({ onKey }: { onKey: (k: string) => void }) {
   );
 });
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   scroll: {
     paddingHorizontal: spacing(6),
     paddingBottom: spacing(8),
@@ -384,6 +399,7 @@ const styles = StyleSheet.create({
   amountCur: {
     fontFamily: fontFamily.monoMed,
     fontSize: 26,
+    color: colors.ink,
   },
   amountSub: {
     fontFamily: fontFamily.mono,
@@ -479,9 +495,9 @@ const styles = StyleSheet.create({
     opacity: 0.35,
   },
   confirmText: {
-    fontFamily: fontFamily.sansBold,
-    fontSize: t.h2,
-    letterSpacing: 3,
+    fontFamily: fontFamily.monoMed,
+    fontSize: 15,
+    letterSpacing: 1,
     color: colors.onInk,
   },
 });

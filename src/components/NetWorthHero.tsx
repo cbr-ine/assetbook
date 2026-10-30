@@ -1,7 +1,8 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, fontFamily, numerals, spacing, type as t } from '../theme';
+import { fontFamily, numerals, spacing, type as t, type Palette } from '../theme';
+import { useThemedStyles } from '../state/ThemeContext';
 import { currencySymbol, formatNumber } from '../utils/format';
 import type { NetWorthSummary } from '../data/types';
 import { RollingNumber } from './RollingNumber';
@@ -17,6 +18,7 @@ interface Props {
  * 金额逐位滚动（只有变了的位数会动）；金额长了自动降一号字，避免超出纸宽。
  */
 export function NetWorthHero({ summary }: Props) {
+  const styles = useThemedStyles(createStyles);
   const text = formatNumber(summary.net);
   // 位数多时降字号：40 → 32 → 26，行高始终跟着字号走
   const fontSize = text.length > 12 ? 26 : text.length > 10 ? 32 : t.total;
@@ -52,6 +54,7 @@ export function NetWorthHero({ summary }: Props) {
 }
 
 function Line({ label, value }: { label: string; value: string }) {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.line}>
       <Text style={styles.lineLabel}>{label}</Text>
@@ -61,7 +64,8 @@ function Line({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   wrap: {
     position: 'relative',
     alignItems: 'center',
@@ -86,6 +90,7 @@ const styles = StyleSheet.create({
   },
   cur: {
     fontFamily: fontFamily.monoMed,
+    color: colors.ink,
   },
   lines: {
     alignSelf: 'stretch',

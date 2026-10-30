@@ -13,6 +13,9 @@ android/.gradle/
 android/local.properties
 ios/Pods/
 ios/build/
+ios/Podfile.lock
+*.xcuserstate
+xcuserdata/
 *.apk
 *.aab
 *.ipa

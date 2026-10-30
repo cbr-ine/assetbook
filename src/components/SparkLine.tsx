@@ -1,9 +1,11 @@
-import React, { memo, useEffect, useMemo, useRef } from 'react';
-import { Animated } from 'react-native';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 
-import { colors, motion } from '../theme';
+import { motion } from '../theme';
+import { useTheme } from '../state/ThemeContext';
 import { motionOff } from './Motion';
+import { ChartTip } from './ChartTip';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
@@ -15,28 +17,69 @@ interface Props {
   color?: string;
   /** 换一个值就重播一次描线（区间切换用） */
   replayKey?: string | number;
+  /** 给了就开点选：按某个点弹出「日期 + 金额」气泡（自适应位置） */
+  tooltip?: (index: number) => { label: string; value: string } | null;
 }
 
 /**
  * 净值折线：一条等宽印字线从左描到右，末位点一下落。
  * 几何在 JS 里算一次；动画只驱动 strokeDashoffset / 末点透明度，
  * 整图只有 2 个原生节点，不按天数建视图。
+ * 点选：每个点罩一枚透明命中圈（描线本身 1.6px 点不中），选中画环 + 气泡，再点一次取消。
  */
 export const SparkLine = memo(function SparkLine({
   values,
   width,
   height,
-  color = colors.ink,
+  color,
   replayKey,
+  tooltip,
 }: Props) {
+  const { colors } = useTheme();
+  const stroke = color ?? colors.ink;
+  const [sel, setSel] = useState<number | null>(null);
+
+  // 换数据 / 换区间，旧选中即失效
+  useEffect(() => {
+    setSel(null);
+  }, [replayKey, values]);
+
   const geom = useMemo(() => build(values, width, height), [values, width, height]);
   if (!geom) return null;
 
+  const pt = sel != null ? geom.pts[Math.min(sel, geom.pts.length - 1)] : null;
+  const tip = sel != null && tooltip ? tooltip(Math.min(sel, values.length - 1)) : null;
+
   return (
-    <Svg width={width} height={height}>
-      <DrawPath d={geom.d} length={geom.length} color={color} replayKey={replayKey} />
-      <DrawDot cx={geom.end.x} cy={geom.end.y} color={color} replayKey={replayKey} />
-    </Svg>
+    <View style={{ width, height }}>
+      <Svg width={width} height={height}>
+        <DrawPath d={geom.d} length={geom.length} color={stroke} replayKey={replayKey} />
+        <DrawDot cx={geom.end.x} cy={geom.end.y} color={stroke} replayKey={replayKey} />
+        {tooltip
+          ? geom.pts.map((p, i) => (
+              <Circle
+                key={`t${i}`}
+                cx={p.x}
+                cy={p.y}
+                r={14}
+                fill="transparent"
+                onPress={() => setSel(sel === i ? null : i)}
+              />
+            ))
+          : null}
+        {pt ? <Circle cx={pt.x} cy={pt.y} r={5} stroke={stroke} strokeWidth={1.5} fill="none" /> : null}
+      </Svg>
+      {tip && pt ? (
+        <ChartTip
+          anchorX={pt.x}
+          anchorTop={pt.y}
+          chartW={width}
+          chartH={height}
+          label={tip.label}
+          value={tip.value}
+        />
+      ) : null}
+    </View>
   );
 });
 
@@ -144,7 +187,7 @@ function build(values: number[], width: number, height: number) {
     const y = padY + (1 - (v - lo) / (hi - lo)) * innerH;
     return { x, y };
   });
-  return { d: catmull(pts), length: polylineLength(pts), end: pts[pts.length - 1] };
+  return { d: catmull(pts), length: polylineLength(pts), end: pts[pts.length - 1], pts };
 }
 
 /** 过点的平滑折线：Catmull-Rom → 三次贝塞尔，张力 0.5。点数少时退回折线。 */

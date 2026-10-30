@@ -3,7 +3,8 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LayoutGrid, Plus, TrendingUp, User, Wallet, type LucideIcon } from 'lucide-react-native';
 
-import { colors, fontFamily, radius, spacing, type as t } from '../theme';
+import { fontFamily, radius, spacing, type as t, type Palette } from '../theme';
+import { useTheme, useThemedStyles } from '../state/ThemeContext';
 import { PressableScale } from './Motion';
 import { DashedRule } from './Rule';
 
@@ -27,6 +28,8 @@ const TABS: { key: TabKey; label: string; Icon: LucideIcon }[] = [
  * 圆键外圈用纸色描一圈，正好盖住穿过它的虚线。
  */
 export function TabBar({ active, onChange, onAdd }: Props) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
 
   return (
@@ -66,6 +69,8 @@ function TabItem({
   active: boolean;
   onPress: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const tint = active ? colors.ink : colors.dimInk;
   const { Icon } = tab;
   return (
@@ -76,7 +81,8 @@ function TabItem({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   bar: {
     backgroundColor: colors.paper,
   },

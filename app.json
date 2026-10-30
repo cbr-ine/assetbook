@@ -2,7 +2,7 @@
   "expo": {
     "name": "资产账本",
     "slug": "assetbook",
-    "version": "0.4.1",
+    "version": "0.4.2",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "backgroundColor": "#EDEAE2",
@@ -15,7 +15,7 @@
     "ios": {
       "supportsTablet": false,
       "userInterfaceStyle": "light",
-      "bundleIdentifier": "com.assetbook.app"
+      "bundleIdentifier": "com.borunchen.assetbook"
     },
     "android": {
       "userInterfaceStyle": "light",
@@ -31,6 +31,7 @@
       }
     },
     "plugins": [
+      "expo-navigation-bar",
       [
         "expo-image-picker",
         {

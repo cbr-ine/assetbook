@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { colors, fontFamily, motion, radius, spacing, type as t } from '../theme';
+import { fontFamily, motion, radius, spacing, type as t, type Palette } from '../theme';
+import { useThemedStyles } from '../state/ThemeContext';
 import { PressableScale } from './Motion';
 import { DashedRule } from './Rule';
 
@@ -37,6 +38,7 @@ export function useConfirm() {
 }
 
 export function ConfirmProvider({ children }: { children: React.ReactNode }) {
+  const styles = useThemedStyles(createStyles);
   const [req, setReq] = useState<Req | null>(null);
   // 纱幕淡出播完才卸载 Modal，避免最后一帧闪空
   const [mounted, setMounted] = useState(false);
@@ -132,7 +134,8 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   host: {
     flex: 1,
     alignItems: 'center',

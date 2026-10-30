@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 
-import { colors, fontFamily, motion, radius, spacing, type as t } from '../theme';
+import { fontFamily, motion, radius, spacing, type as t, type Palette } from '../theme';
+import { useThemedStyles } from '../state/ThemeContext';
 
 /**
  * 底部吐司：统一承载「已更新 / 联网失败」这类一次性提示。
@@ -18,6 +19,7 @@ export function useToast() {
 const HOLD_MS = 2600;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const styles = useThemedStyles(createStyles);
   const [message, setMessage] = useState<string | null>(null);
   const v = useRef(new Animated.Value(0)).current;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -82,7 +84,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   host: {
     flex: 1,
   },

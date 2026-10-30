@@ -2,7 +2,8 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Trash2 } from 'lucide-react-native';
 
-import { colors, fontFamily, numerals, spacing, type as t } from '../theme';
+import { fontFamily, numerals, spacing, type as t, type Palette } from '../theme';
+import { useTheme, useThemedStyles } from '../state/ThemeContext';
 import { currencySymbol, formatFixed, formatRelativeDay } from '../utils/format';
 import type { AssetItem, Expense } from '../data/types';
 import { useConfirm } from './Confirm';
@@ -24,6 +25,8 @@ interface Props {
  * 点行可改这笔；行尾一枚验讫章红的删除记号（与统计页明细同一语言），长按整行也可以删。
  */
 export function RecentList({ expenses, assets, onDelete, onEdit }: Props) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const nameOf = (id: string) => assets.find((a) => a.id === id)?.name ?? '未知账户';
   const { confirm } = useConfirm();
 
@@ -83,7 +86,8 @@ export function RecentList({ expenses, assets, onDelete, onEdit }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   section: {
     marginTop: spacing(6),
   },

@@ -8,7 +8,8 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { colors, motion } from '../theme';
+import { motion } from '../theme';
+import { useTheme } from '../state/ThemeContext';
 
 /**
  * 动效基础件 · 克制 · 纸感
@@ -95,6 +96,7 @@ export function PressableScale({
   onPressOut,
   ...rest
 }: PressableScaleProps) {
+  const { colors } = useTheme();
   const v = useRef(new Animated.Value(1)).current;
   const [pressed, setPressed] = useState(false);
 

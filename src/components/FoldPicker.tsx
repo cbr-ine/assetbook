@@ -2,7 +2,8 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, StyleSheet, Text, View } from 'react-native';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 
-import { colors, fontFamily, motion, spacing, type as t } from '../theme';
+import { fontFamily, motion, spacing, type as t, type Palette } from '../theme';
+import { useTheme, useThemedStyles } from '../state/ThemeContext';
 import { motionOff, PressableScale } from './Motion';
 import { DotLeader } from './Rule';
 
@@ -29,6 +30,8 @@ export function FoldPicker({
   onToggle: () => void;
   children: React.ReactNode;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const v = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -80,7 +83,8 @@ export function FoldPicker({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   head: {
     flexDirection: 'row',
     alignItems: 'center',

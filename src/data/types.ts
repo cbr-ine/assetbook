@@ -59,6 +59,10 @@ export interface AssetItem {
   iconKey?: string;
   note?: string;
   sort?: number;
+  /** 房产：建筑面积（㎡） */
+  areaM2?: number;
+  /** 房产：区域（城市 / 板块，自由文本） */
+  region?: string;
 }
 
 /** 一笔支出。只记支出，收入暂不做。 */

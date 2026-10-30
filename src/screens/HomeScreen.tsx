@@ -1,35 +1,30 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Coins, PencilLine, RefreshCw, type LucideIcon } from 'lucide-react-native';
 
-import { ExpenseSheet } from '../components/ExpenseSheet';
 import { ExpenseTrendCard } from '../components/ExpenseTrendCard';
 import { EnterView } from '../components/Motion';
 import { NetWorthHero } from '../components/NetWorthHero';
-import { RecentList } from '../components/RecentList';
 import { DashedRule, SectionLabel } from '../components/Rule';
-import { colors, fontFamily, spacing, type as t } from '../theme';
+import { fontFamily, spacing, type as t, type Palette } from '../theme';
+import { useTheme, useThemedStyles } from '../state/ThemeContext';
 import { useApp } from '../state/AppContext';
-import type { Expense } from '../data/types';
 
 const H_PADDING = spacing(6);
 
 /**
  * 主页（总览）。视觉母题：一张刚打出来的对账单。
- * 头（户名 + 凭条编号）→ 净资产（等宽大字）→ 支出 → 最近记录 → 尾（时间戳 + 结算语）。
+ * 头（户名 + 凭条编号）→ 净资产（等宽大字）→ 支出趋势 → 尾（时间戳）。
+ * 支出明细不在本页（统计页与「按日期查询」子页承接），保持页面整洁。
  * 账本还空着的时候，中间换成三步引导。
  */
 export function HomeScreen() {
+  const styles = useThemedStyles(createStyles);
   const insets = useSafeAreaInsets();
-  const { summary, dailySpend, expenses, assets, deleteExpense } = useApp();
-  const [editing, setEditing] = useState<Expense | null>(null);
+  const { summary, dailySpend, expenses, assets } = useApp();
 
   const trendTotal = useMemo(() => dailySpend.reduce((s, v) => s + v, 0), [dailySpend]);
-  const recent = useMemo(
-    () => [...expenses].sort((a, b) => +new Date(b.date) - +new Date(a.date)).slice(0, 6),
-    [expenses],
-  );
   const emptyLedger = assets.length === 0 && expenses.length === 0;
   const stamp = useMemo(() => {
     const d = new Date();
@@ -58,28 +53,20 @@ export function HomeScreen() {
           <>
             <NetWorthHero summary={summary} />
             <ExpenseTrendCard dailyValues={dailySpend} total={trendTotal} rangeLabel="近 14 天" />
-            <RecentList
-              expenses={recent}
-              assets={assets}
-              onDelete={deleteExpense}
-              onEdit={setEditing}
-            />
           </>
         )}
 
         <View style={styles.footer}>
           <Text style={styles.footLine}>{stamp}</Text>
-          <Text style={styles.footLine}>THANK YOU　·　请核对后再行结算</Text>
         </View>
       </ScrollView>
-
-      <ExpenseSheet visible={editing !== null} edit={editing} onClose={() => setEditing(null)} />
     </EnterView>
   );
 }
 
 /** 空账本引导：三步，顺着底部导航从左到右说一遍。 */
 function FirstRunGuide() {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.guide}>
       <SectionLabel latin="GET STARTED" cn="账本还是空的" />
@@ -87,7 +74,7 @@ function FirstRunGuide() {
       <View style={styles.steps}>
         <Step Icon={Coins} text="在「资产」页记下账户、借出款与实物，净资产会自动合出来。" />
         <Step Icon={PencilLine} text="点下面的圆键记一笔支出，金额会从对应账户里扣掉。" />
-        <Step Icon={RefreshCw} text="在「我的」页联网更新汇率，外币资产自动折算成人民币。" />
+        <Step Icon={RefreshCw} text="在「我的 → 汇率与币种」里联网更新汇率，外币资产自动折算成人民币。" />
       </View>
 
       <DashedRule style={styles.guideRule} />
@@ -97,6 +84,8 @@ function FirstRunGuide() {
 }
 
 function Step({ Icon, text }: { Icon: LucideIcon; text: string }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.step}>
       <Icon size={18} color={colors.dimInk} strokeWidth={1.6} />
@@ -105,7 +94,8 @@ function Step({ Icon, text }: { Icon: LucideIcon; text: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.paper,

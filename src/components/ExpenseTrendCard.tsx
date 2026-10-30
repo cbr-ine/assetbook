@@ -1,7 +1,8 @@
 import React from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
-import { colors, fontFamily, numerals, spacing, type as t } from '../theme';
+import { fontFamily, numerals, spacing, type as t, type Palette } from '../theme';
+import { useThemedStyles } from '../state/ThemeContext';
 import { formatFixed } from '../utils/format';
 import { Bars } from './Bars';
 import { DashedRule, DotLeader, SectionLabel } from './Rule';
@@ -22,6 +23,7 @@ interface Props {
  * 柱体从基线长上来；峰值那根用印字蓝黑加深，代替「环比上涨」之类的说明。
  */
 export function ExpenseTrendCard({ dailyValues, total, rangeLabel = '近 14 天' }: Props) {
+  const styles = useThemedStyles(createStyles);
   const { width } = useWindowDimensions();
   const chartWidth = width - PADDING * 2;
 
@@ -32,7 +34,15 @@ export function ExpenseTrendCard({ dailyValues, total, rangeLabel = '近 14 天'
     <View style={styles.section}>
       <SectionLabel latin="EXPENSE" cn={`支出 / ${rangeLabel}`} />
 
-      <Bars values={dailyValues} width={chartWidth} height={CHART_HEIGHT} />
+      <Bars
+        values={dailyValues}
+        width={chartWidth}
+        height={CHART_HEIGHT}
+        tooltip={(i) => {
+          const d = new Date(Date.now() - (dailyValues.length - 1 - i) * 24 * 60 * 60 * 1000);
+          return { label: `${d.getMonth() + 1}月${d.getDate()}日`, value: `¥${formatFixed(dailyValues[i])}` };
+        }}
+      />
 
       <View style={styles.sum}>
         <DashedRule style={styles.sumRule} />
@@ -51,7 +61,8 @@ export function ExpenseTrendCard({ dailyValues, total, rangeLabel = '近 14 天'
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   section: {
     marginTop: spacing(6),
   },

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Trash2, X } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Trash2, X } from 'lucide-react-native';
 
 import { toCny } from '../data/sample';
 import type { Expense } from '../data/types';
@@ -13,15 +13,16 @@ import { ExpenseSheet } from '../components/ExpenseSheet';
 import { EnterView, PressableScale } from '../components/Motion';
 import { DashedRule, DotLeader, SectionLabel } from '../components/Rule';
 import { Sheet } from '../components/Sheet';
-import { colors, fontFamily, numerals, radius, spacing, type as t } from '../theme';
-import { currencySymbol, formatDate, formatFixed, formatNumber, formatRelativeDay } from '../utils/format';
+import { fontFamily, numerals, radius, spacing, type as t, type Palette } from '../theme';
+import { useTheme, useThemedStyles } from '../state/ThemeContext';
+import { billingCycleStart, currencySymbol, formatDate, formatFixed, formatNumber, formatRelativeDay } from '../utils/format';
 
 const H_PADDING = spacing(6);
 const CHART_HEIGHT = 72;
 const DAY = 24 * 60 * 60 * 1000;
 /** 明细先渲染的行数：ScrollView 会一次性建出所有子视图，每行十几毫秒（debug 实测），
- *  几十笔时挂载能把主线程卡住几百毫秒。先给 20 行，其余点「展开全部」。 */
-const DETAIL_LIMIT = 20;
+ *  几十笔时挂载能把主线程卡住几百毫秒。先给 10 行，更多进「按日期查询」子页。 */
+const DETAIL_LIMIT = 10;
 
 type Range = 'week' | 'month';
 
@@ -39,7 +40,9 @@ function dayStart(d: Date): number {
  * 支出是热敏柱，净值是描线折线；再按账户、按备注各列前几名的点线账，
  * 最后一张明细表 —— 区间内的每一笔都能就地改（点行）或删（右侧图标，金额退回账户）。
  */
-export function StatsScreen() {
+export function StatsScreen({ onOpenExpenses }: { onOpenExpenses: () => void }) {
+  const styles = useThemedStyles(createStyles);
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const {
@@ -50,13 +53,16 @@ export function StatsScreen() {
     monthSpendCny,
     monthlyBudgetCny,
     setMonthlyBudget,
+    billingDay,
     snapshots,
   } = useApp();
   const { confirm } = useConfirm();
   const [range, setRange] = useState<Range>('month');
-  const [showAll, setShowAll] = useState(false);
   const [editing, setEditing] = useState<Expense | null>(null);
   const [budgetOpen, setBudgetOpen] = useState(false);
+
+  // 本账期起点：起始日 1 就是自然月（旧口径原样）
+  const cycleStart = useMemo(() => billingCycleStart(new Date(), billingDay), [billingDay]);
 
   const openEdit = useCallback((e: Expense) => setEditing(e), []);
 
@@ -71,7 +77,7 @@ export function StatsScreen() {
     const todayStart = dayStart(now);
     const start = range === 'week'
       ? todayStart - 6 * DAY
-      : new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      : cycleStart.getTime();
     const days = Math.round((todayStart - start) / DAY) + 1;
 
     const daily: number[] = new Array(days).fill(0);
@@ -110,8 +116,9 @@ export function StatsScreen() {
       avg: count > 0 ? total / days : 0,
       accounts: top(byAccount, nameOf),
       notes: top(byNote, (k) => k),
+      start,
     };
-  }, [expenses, assets, rates, range, nameOf]);
+  }, [expenses, assets, rates, range, nameOf, cycleStart]);
 
   const confirmDelete = useCallback(
     (e: Expense) => {
@@ -128,7 +135,14 @@ export function StatsScreen() {
   );
 
   const cny = currencySymbol('CNY');
-  const rangeLabel = range === 'month' ? '本月' : '近 7 天';
+  /** 起始日 1 保持「本月」叫法；自定义起始日后改叫「账期」，避免误会 */
+  const monthWord = billingDay === 1 ? '本月' : '账期';
+  const rangeLabel =
+    range === 'month'
+      ? billingDay === 1
+        ? '本月'
+        : `自 ${cycleStart.getMonth() + 1}月${cycleStart.getDate()}日`
+      : '近 7 天';
 
   return (
     <EnterView style={styles.root}>
@@ -152,11 +166,11 @@ export function StatsScreen() {
                 onPress={() => setRange(r)}
                 pressTint
                 style={[styles.toggleChip, on && styles.toggleOn]}
-                accessibilityLabel={r === 'month' ? '本月' : '本周'}
-              >
-                <Text style={[styles.toggleText, on && styles.toggleTextOn]}>
-                  {r === 'month' ? '本月' : '本周'}
-                </Text>
+        accessibilityLabel={r === 'month' ? monthWord : '本周'}
+      >
+        <Text style={[styles.toggleText, on && styles.toggleTextOn]}>
+          {r === 'month' ? monthWord : '本周'}
+        </Text>
               </PressableScale>
             );
           })}
@@ -164,7 +178,16 @@ export function StatsScreen() {
 
         <SectionLabel latin="EXPENSE" cn={`支出 / ${rangeLabel}`} />
 
-        <Bars values={view.daily} width={chartWidth} height={CHART_HEIGHT} replayKey={range} />
+        <Bars
+          values={view.daily}
+          width={chartWidth}
+          height={CHART_HEIGHT}
+          replayKey={range}
+          tooltip={(i) => {
+            const d = new Date(view.start + i * DAY);
+            return { label: `${d.getMonth() + 1}月${d.getDate()}日`, value: `¥${formatFixed(view.daily[i])}` };
+          }}
+        />
 
         <View style={styles.sum}>
           <DashedRule style={styles.sumRule} />
@@ -173,7 +196,7 @@ export function StatsScreen() {
           <SumLine label="笔数 COUNT" value={String(view.count)} />
         </View>
 
-        <SectionLabel latin="BUDGET" cn="本月预算" />
+        <SectionLabel latin="BUDGET" cn={`${monthWord}预算`} />
         <BudgetSection spend={monthSpendCny} budget={monthlyBudgetCny} onAdjust={() => setBudgetOpen(true)} />
 
         <SectionLabel latin="NET WORTH" cn="净值走势 · 近 30 天" />
@@ -206,7 +229,7 @@ export function StatsScreen() {
           <Text style={styles.empty}>区间内没有支出</Text>
         ) : (
           <React.Fragment>
-            {(showAll ? view.items : view.items.slice(0, DETAIL_LIMIT)).map((e) => (
+            {view.items.slice(0, DETAIL_LIMIT).map((e) => (
               <DetailRow
                 key={e.id}
                 e={e}
@@ -215,16 +238,15 @@ export function StatsScreen() {
                 onEdit={openEdit}
               />
             ))}
-            {!showAll && view.items.length > DETAIL_LIMIT ? (
+            {view.items.length > DETAIL_LIMIT ? (
               <PressableScale
-                onPress={() => setShowAll(true)}
+                onPress={onOpenExpenses}
                 style={styles.moreRow}
                 pressTint
-                accessibilityLabel={`展开全部 ${view.items.length} 笔明细`}
+                accessibilityLabel="按日期查询支出"
               >
-                <Text style={styles.moreText}>
-                  展开全部 {view.items.length} 笔 · SHOW ALL
-                </Text>
+                <Text style={styles.moreText}>按日期查询 · BY DATE</Text>
+                <ChevronRight size={14} color={colors.dimInk} strokeWidth={1.8} />
               </PressableScale>
             ) : null}
           </React.Fragment>
@@ -235,15 +257,16 @@ export function StatsScreen() {
       <BudgetSheet
         visible={budgetOpen}
         onClose={() => setBudgetOpen(false)}
-        spend={monthSpendCny}
         budget={monthlyBudgetCny}
         onSave={setMonthlyBudget}
+        title={`${monthWord}预算`}
       />
     </EnterView>
   );
 }
 
 function SumLine({ label, value, big, color }: { label: string; value: string; big?: boolean; color?: string }) {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.line}>
       <Text style={styles.lineLabel}>{label}</Text>
@@ -265,11 +288,12 @@ function BudgetSection({
   budget: number | null;
   onAdjust: () => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const cny = currencySymbol('CNY');
   if (budget == null) {
     return (
-      <PressableScale onPress={onAdjust} style={styles.budgetSetup} pressTint accessibilityLabel="设置月度预算">
-        <Text style={styles.budgetSetupText}>这个月打算花多少？设条线，花超了会提醒</Text>
+      <PressableScale onPress={onAdjust} style={styles.budgetSetup} pressTint accessibilityLabel="设预算">
         <Text style={styles.budgetSetupBtn}>设预算 SET</Text>
       </PressableScale>
     );
@@ -321,19 +345,27 @@ function NetWorthTrend({
   snapshots: { id: string; date: string; totalCny: number }[];
   width: number;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const cny = currencySymbol('CNY');
   const last = snapshots[snapshots.length - 1];
   const first = snapshots[0];
   const delta = last.totalCny - first.totalCny;
   const deltaText = `${delta >= 0 ? '+' : '−'}${cny}${formatNumber(Math.abs(Math.round(delta)))}`;
+  // 映射成稳定引用：折线的「换数据清选中」按 values 身份判断，不能每次渲染都造新数组
+  const series = useMemo(() => snapshots.map((s) => s.totalCny), [snapshots]);
 
   return (
     <>
       <SparkLine
-        values={snapshots.map((s) => s.totalCny)}
+        values={series}
         width={width}
         height={CHART_HEIGHT}
         replayKey={snapshots.length}
+        tooltip={(i) => ({
+          label: formatDate(snapshots[i].date),
+          value: `${cny}${formatNumber(Math.round(snapshots[i].totalCny))}`,
+        })}
       />
       <View style={styles.sum}>
         <DashedRule style={styles.sumRule} />
@@ -352,16 +384,19 @@ function NetWorthTrend({
 function BudgetSheet({
   visible,
   onClose,
-  spend,
   budget,
   onSave,
+  title,
 }: {
   visible: boolean;
   onClose: () => void;
-  spend: number;
   budget: number | null;
   onSave: (cny: number | null) => void;
+  /** 「本月预算」/「账期预算」，随账期口径 */
+  title: string;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [text, setText] = useState('');
   useEffect(() => {
     if (visible) setText(budget != null ? String(budget) : '');
@@ -385,7 +420,7 @@ function BudgetSheet({
         <PressableScale onPress={onClose} style={styles.iconBtn} accessibilityLabel="关闭">
           <X size={22} color={colors.ink} strokeWidth={1.7} />
         </PressableScale>
-        <Text style={styles.sheetTitle}>本月预算</Text>
+        <Text style={styles.sheetTitle}>{title}</Text>
         <View style={{ width: 44 }} />
       </View>
       <DashedRule />
@@ -400,9 +435,6 @@ function BudgetSheet({
           style={styles.budgetInput}
           autoFocus
         />
-        <Text style={styles.budgetHint}>
-          本月已经花了 ¥{formatNumber(Math.round(spend))}。记支出时一过这条线就会提醒你。
-        </Text>
         <PressableScale
           onPress={save}
           disabled={!valid}
@@ -423,6 +455,7 @@ function BudgetSheet({
 }
 
 function SliceRow({ label, value }: { label: string; value: string }) {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.line}>
       <Text style={styles.sliceLabel} numberOfLines={1}>
@@ -446,6 +479,8 @@ const DetailRow = React.memo(function DetailRow({
   onDelete: (e: Expense) => void;
   onEdit: (e: Expense) => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
     <PressableScale
       style={styles.detailRow}
@@ -480,7 +515,8 @@ const DetailRow = React.memo(function DetailRow({
   );
 });
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.paper,
@@ -630,17 +666,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing(4),
     marginTop: spacing(2),
     alignItems: 'center',
-    gap: spacing(1.5),
   },
-  budgetSetupText: {
-    fontFamily: fontFamily.sans,
-    fontSize: t.body,
-    color: colors.dimInk,
-    textAlign: 'center',
-  },
+  /** 与行内金额同一档：monoMed 15，不抢戏 */
   budgetSetupBtn: {
     fontFamily: fontFamily.monoMed,
-    fontSize: t.small,
+    fontSize: 15,
     letterSpacing: 1,
     color: colors.ink,
   },
@@ -692,20 +722,13 @@ const styles = StyleSheet.create({
   },
   budgetInput: {
     fontFamily: fontFamily.monoMed,
-    fontSize: 26,
+    fontSize: 17,
     color: colors.ink,
     borderBottomWidth: 1,
     borderBottomColor: colors.dash,
     minHeight: 48,
     paddingVertical: spacing(1.5),
     ...numerals,
-  },
-  budgetHint: {
-    fontFamily: fontFamily.sans,
-    fontSize: t.small,
-    lineHeight: t.small * 1.7,
-    color: colors.dimInk,
-    marginTop: spacing(3),
   },
   confirmBtn: {
     backgroundColor: colors.ink,
@@ -720,9 +743,9 @@ const styles = StyleSheet.create({
     opacity: 0.35,
   },
   confirmText: {
-    fontFamily: fontFamily.sansBold,
-    fontSize: t.h2,
-    letterSpacing: 3,
+    fontFamily: fontFamily.monoMed,
+    fontSize: 15,
+    letterSpacing: 1,
     color: colors.onInk,
   },
   clearBtn: {

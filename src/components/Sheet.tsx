@@ -11,7 +11,8 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { colors, motion, radius, spacing } from '../theme';
+import { motion, radius, spacing, type Palette } from '../theme';
+import { useThemedStyles } from '../state/ThemeContext';
 import { motionOff } from './Motion';
 
 interface Props {
@@ -33,6 +34,7 @@ const FALLBACK_TRAVEL = 720;
  * 只点纱幕或 ×，没有下滑关闭（避免跟键盘手势打架）。
  */
 export function Sheet({ visible, onClose, children, style }: Props) {
+  const styles = useThemedStyles(createStyles);
   const [mounted, setMounted] = useState(visible);
   const [panelH, setPanelH] = useState(0);
   const prog = useRef(new Animated.Value(0)).current;
@@ -110,7 +112,8 @@ export function Sheet({ visible, onClose, children, style }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: Palette) =>
+  StyleSheet.create({
   root: {
     flex: 1,
     justifyContent: 'flex-end',
