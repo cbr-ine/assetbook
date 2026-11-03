@@ -39,9 +39,23 @@ function localIso(d: Date): string {
  */
 export function ExpenseSheet({ visible, onClose, edit = null }: Props) {
   const styles = useThemedStyles(createStyles);
-  const { assets, addExpense, updateExpense, rates, monthSpendCny, monthlyBudgetCny, billingDay } = useApp();
+  const { assets, expenses, addExpense, updateExpense, rates, monthSpendCny, monthlyBudgetCny, billingDay } = useApp();
   const toast = useToast();
   const accounts = useMemo(() => assets.filter((a) => a.group === 'liquid'), [assets]);
+
+  /** 最近 3 条不重复的备注（expenses 本身按时间倒序）：点一下直接填，省得重打 */
+  const recentNotes = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const e of expenses) {
+      const n = e.note.trim();
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      out.push(n);
+      if (out.length === 3) break;
+    }
+    return out;
+  }, [expenses]);
 
   const [amountText, setAmountText] = useState('');
   const [accountId, setAccountId] = useState('');
@@ -174,6 +188,23 @@ export function ExpenseSheet({ visible, onClose, edit = null }: Props) {
         )}
 
         <NoteField note={note} onChange={setNote} />
+        {recentNotes.length > 0 ? (
+          <View style={styles.noteChips}>
+            {recentNotes.map((n) => (
+              <PressableScale
+                key={n}
+                onPress={() => setNote(n)}
+                style={styles.noteChip}
+                pressTint
+                accessibilityLabel={`填入备注 ${n}`}
+              >
+                <Text style={styles.noteChipText} numberOfLines={1}>
+                  {n}
+                </Text>
+              </PressableScale>
+            ))}
+          </View>
+        ) : null}
 
         {edit ? null : (
           <>
@@ -457,6 +488,28 @@ const createStyles = (colors: Palette) =>
     borderBottomColor: colors.dash,
     minHeight: 44,
     paddingVertical: spacing(1.5),
+  },
+  /** 备注快捷胶囊：与账期快捷区间同一小胶囊语言 */
+  noteChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing(2),
+    marginTop: spacing(2),
+  },
+  noteChip: {
+    borderWidth: 1,
+    borderColor: colors.dash,
+    borderRadius: radius.ring,
+    paddingHorizontal: spacing(3),
+    minHeight: 36,
+    justifyContent: 'center',
+    maxWidth: '48%',
+  },
+  noteChipText: {
+    fontFamily: fontFamily.mono,
+    fontSize: t.small,
+    letterSpacing: 1,
+    color: colors.ink,
   },
   dateText: {
     fontFamily: fontFamily.mono,

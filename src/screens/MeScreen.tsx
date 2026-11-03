@@ -222,7 +222,7 @@ export function MeScreen({ onOpenRates }: { onOpenRates: () => void }) {
         <View style={styles.about}>
           <DashedRule style={styles.aboutRule} />
           <Text style={styles.aboutLine}>资产账本 · ASSET STATEMENT</Text>
-          <Text style={styles.aboutLine}>凭条 · 票据质感　v0.8.12</Text>
+          <Text style={styles.aboutLine}>凭条 · 票据质感　v0.9.0</Text>
         </View>
       </ScrollView>
     </EnterView>
